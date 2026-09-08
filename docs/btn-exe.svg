@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="210" height="62" viewBox="0 0 210 62" role="img" aria-label="Direct: download the .exe">
+  <rect width="210" height="62" rx="14" fill="#0067C0"/>
+  <g transform="translate(20,20)">
+    <path fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0 0 4-4m-4 4-4-4M5 19h14"/>
+  </g>
+  <text x="52" y="27" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="11" font-weight="600" letter-spacing="1" fill="#ffffff" fill-opacity="0.72">DIRECT</text>
+  <text x="52" y="46" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif" font-size="17" font-weight="600" fill="#ffffff">Download .exe</text>
+</svg>

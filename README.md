@@ -4,75 +4,63 @@
 
 # Watt's Left
 
-**See how fast your laptop is charging — or draining — live, in watts.**
+**See how fast your laptop is charging or draining, live, in watts.**
 
-[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-Download-0067b8?logo=microsoftstore&logoColor=white)](https://apps.microsoft.com/detail/9N39TLT3SXV6)
-[![Direct .exe](https://img.shields.io/badge/Direct-.exe-1e6fff)](../../releases)
-[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d6?logo=windows11&logoColor=white)](#requirements)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-
-[wattsleft.app](https://wattsleft.app)
-
-<br>
-
-<img src="docs/screenshot.png" alt="The Watt's Left window: watts in, watts out, time left, and 30-minute graphs" width="720">
+<a href="https://apps.microsoft.com/detail/9N39TLT3SXV6"><img src="docs/btn-store.svg" alt="Recommended: get it from the Microsoft Store" height="54"></a>
+&nbsp;
+<a href="../../releases"><img src="docs/btn-exe.svg" alt="Direct: download the .exe" height="54"></a>
 
 </div>
 
-Watt's Left is a free, open-source Windows app that shows, live, how many watts your
-charger is putting into your laptop battery and how many watts your laptop is drawing out —
-plus time left, stored energy, voltage and battery health. One small window. No account,
-no ads, no tracking, and it never touches the network.
+<br>
 
-## What it shows
+<table>
+  <tr>
+    <td valign="top" width="250">
+      <img src="docs/screenshot.png" alt="The Watt's Left window: live watts in and out, time left, stored energy, voltage, health, and thirty-minute graphs" width="220">
+    </td>
+    <td valign="top">
+      <h3>What it shows</h3>
+      <ul>
+        <li><b>IN</b> &nbsp;watts flowing from the charger into the battery. Higher is faster charging.</li>
+        <li><b>OUT</b> &nbsp;watts the laptop is drawing from the battery. Lower lasts longer.</li>
+        <li><b>Time left</b> &nbsp;stored energy divided by your average draw over the last five minutes, refreshed every thirty seconds.</li>
+        <li><b>Stored energy</b> in watt-hours, <b>voltage</b>, <b>health</b> against design capacity, and <b>cycle count</b>.</li>
+        <li><b>Thirty-minute graphs</b> of charge, watts in, watts out and voltage, kept across restarts.</li>
+        <li>The live <b>percent in your tray icon.</b> Hover any number for a one-sentence explanation.</li>
+      </ul>
+    </td>
+  </tr>
+</table>
 
-- **IN** — watts flowing from the charger into the battery. Higher is faster charging.
-- **OUT** — watts the laptop is drawing from the battery. Lower lasts longer.
-- **Time left** — stored energy divided by your average draw over the last five minutes, refreshed every thirty seconds.
-- **Stored energy** (Wh), **voltage**, **health** against design capacity, and **cycle count**.
-- **Thirty-minute graphs** of charge, watts in, watts out and voltage — kept across restarts.
-- The **percent in the tray icon**. Hover any number for a one-sentence explanation.
+## Overview
 
-## Install
+Watt's Left is a free, open-source Windows app that shows, live, how many watts your charger
+is putting into your laptop battery and how many watts your laptop is drawing out, plus time
+left, stored energy, voltage and battery health. One small window. No account, no ads, no
+tracking, and it never touches the network. More at [wattsleft.app](https://wattsleft.app).
 
-- **Microsoft Store** — one click, auto-updates: [apps.microsoft.com](https://apps.microsoft.com/detail/9N39TLT3SXV6)
-- **Direct installer (.exe)** — grab the latest from [Releases](../../releases)
-
-Both carry everything they need — nothing else to install.
-
-<a id="requirements"></a>**Requirements:** Windows 10 or 11, and a laptop with a battery.
+**Requirements:** Windows 10 or 11, and a laptop with a battery. The Store package and the
+installer each carry everything they need, with nothing else to set up.
 
 ## How it works
 
 Windows itself only shows a percent. Watt's Left reads the battery hardware directly through
 the Windows battery interface (`IOCTL_BATTERY_QUERY_STATUS`, which reports the rate in
-milliwatts) four times a second, and turns it into the numbers above.
+milliwatts) four times a second, and turns it into the numbers above. The result is one small
+window that stays out of the way, plus the live percent on your tray icon.
 
 ## Privacy
 
-No network connections at all. Settings and a half hour of readings live in the app's private
-folder and are removed on uninstall. See the [Privacy Policy](https://wattsleft.app/privacy/).
+No network connections at all. Nothing is uploaded, and there is no account, no analytics,
+and no ads. Your settings and the last half hour of readings live in the app's own private
+folder on your machine, and they are removed when you uninstall. Full
+[Privacy Policy](https://wattsleft.app/privacy/).
 
-## Building from source
+## What's with the little dancing guy?
 
-Open `BatteryChecker.csproj` in Visual Studio (or `dotnet build`) — .NET, WPF, Windows only.
-The layout:
-
-| Path | What's there |
-| --- | --- |
-| `Battery/` | Win32 battery reads |
-| `Tray/` | tray icon — `Shell_NotifyIcon`, GDI-rendered |
-| `MainWindow.*` | the window (`MainWindow.Party.cs` — nothing to see here) |
-| `HoverCards.cs` | the plain-English explanations |
-| `Settings.cs` | settings and autostart, packaged and unpackaged |
-| `Store/` | Store artwork generators and the Inno Setup script |
-
-## Definitely no little dancing guy
-
-There is no setting for it. If there were, he would not dance on the charged part of your
-battery bar, climb down a ladder when you switch him off, or cry when you unplug. He is not
-in `MainWindow.Party.cs`. Do not look there.
+I have literally no idea what you're talking about. Next question.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Made by [Aron Frishberg](https://aronfrishberg.com/).
+MIT. See [LICENSE](LICENSE). Made by [Aron Frishberg](https://aronfrishberg.com/).
