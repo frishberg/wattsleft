@@ -14,24 +14,18 @@
 
 <br>
 
-<table>
-  <tr>
-    <td valign="top" width="250">
-      <img src="docs/screenshot.png" alt="The Watt's Left window: live watts in and out, time left, stored energy, voltage, health, and thirty-minute graphs" width="220">
-    </td>
-    <td valign="top">
-      <h3>What it shows</h3>
-      <ul>
-        <li><b>IN</b> &nbsp;watts flowing from the charger into the battery. Higher is faster charging.</li>
-        <li><b>OUT</b> &nbsp;watts the laptop is drawing from the battery. Lower lasts longer.</li>
-        <li><b>Time left</b> &nbsp;stored energy divided by your average draw over the last five minutes, refreshed every thirty seconds.</li>
-        <li><b>Stored energy</b> in watt-hours, <b>voltage</b>, <b>health</b> against design capacity, and <b>cycle count</b>.</li>
-        <li><b>Thirty-minute graphs</b> of charge, watts in, watts out and voltage, kept across restarts.</li>
-        <li>The live <b>percent in your tray icon.</b> Hover any number for a one-sentence explanation.</li>
-      </ul>
-    </td>
-  </tr>
-</table>
+<div align="center">
+  <img src="docs/screenshot.png" width="270" alt="The Watt's Left window: live watts in and out, time left, stored energy, voltage, health, and thirty-minute graphs">
+</div>
+
+## What it shows
+
+- **IN** &nbsp;watts flowing from the charger into the battery. Higher is faster charging.
+- **OUT** &nbsp;watts the laptop is drawing from the battery. Lower lasts longer.
+- **Time left** &nbsp;stored energy divided by your average draw over the last five minutes, refreshed every thirty seconds.
+- **Stored energy** in watt-hours, **voltage**, **health** against design capacity, and **cycle count**.
+- **Thirty-minute graphs** of charge, watts in, watts out and voltage, kept across restarts.
+- The live **percent in your tray icon.** Hover any number for a one-sentence explanation.
 
 ## Overview
 
