@@ -47,11 +47,11 @@ save(c, "boxart-1080.png")
 
 # 2:3 poster: the tile up top, the name and one line beneath in ink
 c = background(720, 1080)
-tile_with_shadow(c, 400, 160, 170)
+tile_with_shadow(c, 400, 160, 238)   # the tile plus the two lines span about 605 px; this centres the group
 d = ImageDraw.Draw(c)
 f1 = ImageFont.truetype(os.path.join(FONTS, "seguisb.ttf"), 62)
 f2 = ImageFont.truetype(os.path.join(FONTS, "segoeui.ttf"), 26)
-for s, f, y, col in (("Watt's Left", f1, 650, INK), ("Is your charger keeping up?", f2, 740, MUTED)):
+for s, f, y, col in (("Watt's Left", f1, 718, INK), ("Is your charger keeping up?", f2, 808, MUTED)):
     d.text(((720 - d.textlength(s, font=f)) / 2, y), s, font=f, fill=col)
 save(c, "poster-720x1080.png")
 
