@@ -126,5 +126,5 @@ party = Image.open(os.path.join(SHOTS, "party.png")).convert("RGBA")
 win = fit(party, 0.98)
 place(c, win, 1120, (H - win.height) // 2)
 headline(c, "What's with the\nlittle dancing guy?",
-         "These unconfirmed rumors are speculative and baseless. Next question.")
+         "These wild rumors are speculative and baseless. Next question.")
 save(c, "screenshot-4.png")
