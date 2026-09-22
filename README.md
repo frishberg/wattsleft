@@ -21,7 +21,8 @@
 ## What it shows
 
 - **IN** &nbsp;watts flowing from the charger into the battery. Higher is faster charging.
-- **OUT** &nbsp;watts the laptop is drawing from the battery. Lower lasts longer.
+- **OUT** &nbsp;watts the laptop is using. On battery that's what the battery is losing; on the charger it's estimated from the processor's own power meter, and the caption under IN says what the charger is putting out in total, so you can see at a glance whether a charger is keeping up.
+- The state line says so plainly: **Charging**, **Plugged in · holding**, or **Plugged in · draining** with a time left when the charger can't keep up.
 - **Time left** &nbsp;stored energy divided by your average draw over the last five minutes, refreshed every thirty seconds.
 - **Stored energy** in watt-hours, **voltage**, **health** against design capacity, and **cycle count**.
 - **Thirty-minute graphs** of charge, watts in, watts out and voltage, kept across restarts.
@@ -41,7 +42,13 @@ installer each carry everything they need, with nothing else to set up.
 
 Windows itself only shows a percent. Watt's Left reads the battery hardware directly through
 the Windows battery interface (`IOCTL_BATTERY_QUERY_STATUS`, which reports the rate in
-milliwatts) four times a second, and turns it into the numbers above. The result is one small
+milliwatts) four times a second, and turns it into the numbers above. Some laptops, many HP
+consumer models among them, ship with rate reporting switched off in the BIOS and hand every
+tool a flat zero; on those, Watt's Left works the watts out from how fast the stored energy is
+moving instead, and says so. While plugged in, the battery can't see what the laptop itself is
+using, so Watt's Left reads the processor's power meter (Windows 11 exposes it on Intel and AMD
+machines) and adds what the rest of the machine was measured to cost while last on battery; on a
+laptop without that meter the plugged-in estimate simply isn't shown. The result is one small
 window that stays out of the way, plus the live percent on your tray icon.
 
 ## Privacy

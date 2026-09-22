@@ -3,7 +3,7 @@
 ;        then `ISCC.exe Store\WattsLeft.iss`  -> Store\WattsLeft-Setup.exe
 
 #define AppName "Watt's Left"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define Publisher "Aron Frishberg"
 #define Url "https://wattsleft.app"
 #define Src "..\bin\unpackaged\win-x64"
@@ -36,7 +36,9 @@ WizardImageStretch=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
-CloseApplications=yes
+; We terminate the tray app ourselves in [Code] before anything is copied,
+; so Inno's Restart Manager prompt is neither needed nor wanted.
+CloseApplications=no
 RestartApplications=no
 
 [Languages]
@@ -58,7 +60,35 @@ Filename: "{app}\WattsLeft.exe"; Description: "{cm:LaunchProgram,{#StringChange(
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{localappdata}\WattsLeft"
+; Remove the whole install folder, including anything written after install.
+Type: filesandordirs; Name: "{app}"
 
 [UninstallRun]
 ; Remove the "start with Windows" entry if it was switched on.
 Filename: "reg.exe"; Parameters: "delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v WattsLeft /f"; Flags: runhidden; RunOnceId: "RemoveRunKey"
+
+[Code]
+{ Watt's Left runs in the tray, so closing its window doesn't quit it. We
+  terminate the process at the very start of setup and uninstall, before any
+  file is touched, so there is no Restart Manager prompt, no locked files left
+  behind in Program Files, and no copy of the app still running afterwards. }
+procedure KillApp;
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/im WattsLeft.exe /f /t', '',
+    SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(700);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  KillApp;
+  Result := True;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  KillApp;
+  Result := True;
+end;
