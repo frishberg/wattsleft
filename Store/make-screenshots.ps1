@@ -28,6 +28,6 @@ function Shot([string]$name, [string]$headline, [string]$sub) {
     "saved $name"
 }
 
-Shot "screenshot-1.png" "Your battery,`nin watts." "Watts in from the charger, watts out to the laptop,`nreal time left, stored energy, voltage and health.`nLive, four times a second. Free. No tracking."
+Shot "screenshot-1.png" "Is your charger`nkeeping up?" "Watts in from the charger, watts the laptop uses,`nand the net left for the battery. Time left, health, graphs.`nLive, four times a second. Free. No tracking."
 Shot "screenshot-2.png" "Thirty minutes`nof history." "Charge, watts in, watts out and voltage,`nsampled every five seconds and kept across restarts.`nHover any point for the value at that moment."
 Shot "screenshot-3.png" "Every number`nexplained." "Hover anything for one plain sentence on what it means,`nwhat moves it, and what's normal."

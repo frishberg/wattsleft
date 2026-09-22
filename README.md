@@ -20,13 +20,17 @@
 
 ## What it shows
 
-- **IN** &nbsp;watts flowing from the charger into the battery. Higher is faster charging.
-- **OUT** &nbsp;watts the laptop is using. On battery that's what the battery is losing; on the charger it's estimated from the processor's own power meter, and the caption under IN says what the charger is putting out in total, so you can see at a glance whether a charger is keeping up.
-- The state line says so plainly: **Charging**, **Plugged in · holding**, or **Plugged in · draining** with a time left when the charger can't keep up.
-- **Time left** &nbsp;stored energy divided by your average draw over the last five minutes, refreshed every thirty seconds.
+- **IN** &nbsp;watts the charger is putting out.
+- **OUT** &nbsp;watts the laptop is using. Exact on battery; estimated while plugged in.
+- **NET** &nbsp;IN minus OUT: what's left for the battery. Positive and it's filling; negative and the laptop is draining even though it's plugged in, which the state line says plainly: **Plugged in · draining · 1h 20m left**. NET is measured directly by the battery, so it's exact even when IN and OUT are estimates.
+- **Time to full** or **time left**, from a five-minute average, refreshed every thirty seconds.
 - **Stored energy** in watt-hours, **voltage**, **health** against design capacity, and **cycle count**.
-- **Thirty-minute graphs** of charge, watts in, watts out and voltage, kept across restarts.
-- The live **percent in your tray icon.** Hover any number for a one-sentence explanation.
+- **Thirty-minute graphs** of charge, charger watts, laptop watts and voltage, kept across restarts.
+- Hover any number for a two-sentence explanation in plain words.
+
+## Which laptops
+
+Any Windows laptop with a battery: Windows 11 or Windows 10 from version 2004, Intel, AMD or Snapdragon, x64 or ARM64, two batteries included. Laptops whose firmware reports no charge rate (many HP consumer models ship with it off in the BIOS, so other tools show 0 W) get their watts from how fast the stored energy moves, with a "measuring" state instead of a fake zero. The plugged-in IN and OUT figures use the processor's own power meter, which Windows 11 exposes on Intel and AMD machines; elsewhere they show a dash with the reason on hover, and NET works everywhere.
 
 ## Overview
 
@@ -42,14 +46,13 @@ installer each carry everything they need, with nothing else to set up.
 
 Windows itself only shows a percent. Watt's Left reads the battery hardware directly through
 the Windows battery interface (`IOCTL_BATTERY_QUERY_STATUS`, which reports the rate in
-milliwatts) four times a second, and turns it into the numbers above. Some laptops, many HP
-consumer models among them, ship with rate reporting switched off in the BIOS and hand every
-tool a flat zero; on those, Watt's Left works the watts out from how fast the stored energy is
-moving instead, and says so. While plugged in, the battery can't see what the laptop itself is
-using, so Watt's Left reads the processor's power meter (Windows 11 exposes it on Intel and AMD
-machines) and adds what the rest of the machine was measured to cost while last on battery; on a
-laptop without that meter the plugged-in estimate simply isn't shown. The result is one small
-window that stays out of the way, plus the live percent on your tray icon.
+milliwatts) four times a second; that rate is NET. While plugged in, the battery can't see what
+the laptop itself is using, so Watt's Left reads the processor's power meter (the Energy Meter
+performance counters, which Windows 11 exposes on Intel and AMD machines, no driver, no admin)
+and adds what the rest of the machine was measured to cost while last on battery: that's OUT,
+and OUT plus NET is IN. It needs a couple of minutes on battery once to learn the machine, and
+keeps refining. The result is one small window that stays out of the way, plus the app in your
+tray.
 
 ## Privacy
 
