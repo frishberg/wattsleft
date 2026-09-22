@@ -60,7 +60,11 @@ public sealed unsafe partial class TrayIcon : IDisposable
 
     private void Refresh(uint message)
     {
-        nint fresh = RenderTextIcon(_text, _color);
+        // The app's own logo, the blue tile, at the tray's small-icon size for this DPI. The percent lives in the tooltip and the window.
+        int size = GetSystemMetrics(SM_CXSMICON);
+        nint fresh = LoadImageW(GetModuleHandleW(null), 32512, 1 /* IMAGE_ICON */, size, size, 0);
+        if (fresh == 0)
+            fresh = RenderTextIcon(_text, _color);   // no icon resource (a bare debug build): fall back to the number
         var data = new NOTIFYICONDATAW
         {
             cbSize = (uint)sizeof(NOTIFYICONDATAW),
@@ -327,6 +331,7 @@ public sealed unsafe partial class TrayIcon : IDisposable
     [LibraryImport("user32.dll")] private static partial nint CreateIconIndirect(ICONINFO* info);
     [LibraryImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool DestroyIcon(nint icon);
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16)] private static partial nint GetModuleHandleW(string? name);
+    [LibraryImport("user32.dll")] private static partial nint LoadImageW(nint module, nint name, uint type, int cx, int cy, uint flags);
     [LibraryImport("shell32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static partial bool Shell_NotifyIconW(uint message, NOTIFYICONDATAW* data);
     [LibraryImport("gdi32.dll")] private static partial nint CreateCompatibleDC(nint dc);
     [LibraryImport("gdi32.dll")] private static partial nint CreateDIBSection(nint dc, BITMAPINFOHEADER* info, uint usage, void** bits, nint section, uint offset);

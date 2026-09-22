@@ -21,7 +21,7 @@ namespace BatteryChecker;
 public sealed partial class MainWindow : Window
 {
     private const int WidthDip = 340;
-    private const int HeightDip = 412;
+    private const int HeightDip = 420;   // 412 before the NET row, less the old time row
     private const int AverageSeconds = 30;
     private const int EstimateSeconds = 300;      // time-left uses a 5 minute average of the draw
     private const int TimeHoldSeconds = 30;       // and the shown value only moves every 30 s
@@ -31,6 +31,7 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherQueueTimer _timer;
     private readonly HoverCards _cards;
     private readonly Queue<(DateTime At, double Watts)> _samples = new();
+    private readonly Queue<(DateTime At, double? Laptop, double? Charger)> _drawSamples = new();   // for the cards: what the last half minute looked like
     private Reading? _reading;
     private double _peakIn, _peakOut;
     private bool? _statsOnAc;
@@ -41,6 +42,10 @@ public sealed partial class MainWindow : Window
     private enum Menu { Show, StartWithWindows, Separator, Quit }
 
     private bool? _wasCharging;
+    private string _lastHoursText = "";
+    private DateTime _lastChargingAt = DateTime.MinValue;
+    private DateTime _topShownAt;
+    private bool? _topOnAc;
 
     public MainWindow()
     {
@@ -82,19 +87,32 @@ public sealed partial class MainWindow : Window
 
         LoadHistory();
         ChartHover(ChargeChart, ChargeHair, ChargeSpan, s => $"{s.Percent:0}%", () => _history.Count > 0 ? _history[0].At : (DateTime?)null);
-        ChartHover(InChart, InHair, InScale, s => $"{Math.Max(0, s.Watts):0.0} W in", () => _history.Count > 0 ? _history[0].At : (DateTime?)null);
-        ChartHover(OutChart, OutHair, OutScale, s => $"{Math.Max(0, -s.Watts):0.0} W out", () => _history.Count > 0 ? _history[0].At : (DateTime?)null);
+        ChartHover(InChart, InHair, InScale, s => $"{Math.Max(0, s.Draw + s.Watts):0.0} W in", () => _history.Count > 0 ? _history[0].At : (DateTime?)null);
+        ChartHover(OutChart, OutHair, OutScale, s => $"{Math.Max(0, s.Draw):0.0} W out", () => _history.Count > 0 ? _history[0].At : (DateTime?)null);
         ChartHover(VoltsChart, VoltsHair, VoltsScale, s => $"{s.Volts:0.00} V", () => _history.FirstOrDefault(s => s.Volts > 0).At is var f && f != default ? f : (DateTime?)null);
         // Everything that ever moves on the compositor gets translation enabled once, up front. Animating
         // Translation on an element before this throws "property cannot be animated" and freezes the sequence.
-        foreach (var e in new UIElement[] { Dancer, Ladder, TearL, TearR, SadMouth, Graphs, SettingsPanel, ChargeStats, InStats, OutStats, VoltsStats, Root })
+        foreach (var e in new UIElement[] { Dancer, Ladder, TearL, TearR, SadMouth, Graphs, SettingsPanel, ChargeStats, InStats, OutStats, VoltsStats, StateText, Root })
             ElementCompositionPreview.SetIsTranslationEnabled(e, true);
 
         _cards = new HoverCards(DispatcherQueue);
+        // Cards sit in a column just outside the window's right edge, level with what you're pointing at; if the
+        // window is against the right of the screen, the column moves to the left edge instead.
+        _cards.Locate = anchor =>
+        {
+            const double gap = 12;
+            var at = anchor.TransformToVisual(Root).TransformPoint(new Windows.Foundation.Point(0, 0));
+            double scale = GetDpiForWindow(Hwnd) / 96.0;
+            var area = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+            bool right = AppWindow.Position.X + AppWindow.Size.Width + (gap + HoverCards.Width) * scale <= area.X + area.Width;
+            double x = right ? Root.ActualWidth - at.X + gap : -at.X - gap;
+            return (new Windows.Foundation.Point(x, anchor.ActualHeight / 2), right ? Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Right : Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.Left);
+        };
         _cards.Attach(PercentBlock, CardPercent);
         _cards.Attach(InBlock, CardIn);
         _cards.Attach(OutBlock, CardOut);
-        _cards.Attach(TimeRow, CardTime);
+        _cards.Attach(NetBlock, CardNet);
+        _cards.Attach(StateRow, CardTime);   // the time lives in the state line now
         _cards.Attach(StoredRow, CardStored);
         _cards.Attach(VoltageRow, CardVoltage);
         _cards.Attach(HealthRow, CardHealth);
@@ -291,7 +309,7 @@ public sealed partial class MainWindow : Window
     private const int GraphsHeightDip = 320;
     private static readonly TimeSpan HistoryStep = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan HistorySpan = TimeSpan.FromMinutes(30);
-    private readonly List<(DateTime At, double Percent, double Watts, double Volts)> _history = new();
+    private readonly List<(DateTime At, double Percent, double Watts, double Volts, double Draw)> _history = new();
     private DateTime _lastSample = DateTime.MinValue;
     private static readonly string HistoryFile = Path.Combine(Settings.DataFolder, "history.csv");
 
@@ -382,13 +400,13 @@ public sealed partial class MainWindow : Window
         if (r is null || now - _lastSample < HistoryStep)
             return;
         _lastSample = now;
-        _history.Add((now, r.Percent, r.Watts ?? 0, r.Volts ?? 0));
+        _history.Add((now, r.Percent, r.Watts ?? 0, r.Volts ?? 0, r.LaptopWatts ?? r.WattsOut));
         _history.RemoveAll(h => now - h.At > HistorySpan + HistoryStep);
         try
         {
-            File.AppendAllText(HistoryFile, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{now:O},{r.Percent:0.0},{r.Watts ?? 0:0.00},{r.Volts ?? 0:0.000}") + Environment.NewLine);
+            File.AppendAllText(HistoryFile, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{now:O},{r.Percent:0.0},{r.Watts ?? 0:0.00},{r.Volts ?? 0:0.000},{r.LaptopWatts ?? r.WattsOut:0.00}") + Environment.NewLine);
             if (_history.Count % 360 == 0)   // every half hour: drop anything older than the graph window
-                File.WriteAllLines(HistoryFile, _history.Select(h => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{h.At:O},{h.Percent:0.0},{h.Watts:0.00},{h.Volts:0.000}")));
+                File.WriteAllLines(HistoryFile, _history.Select(h => string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{h.At:O},{h.Percent:0.0},{h.Watts:0.00},{h.Volts:0.000},{h.Draw:0.00}")));
         }
         catch
         {
@@ -415,7 +433,8 @@ public sealed partial class MainWindow : Window
                     && at >= cutoff)
                 {
                     double volts = parts.Length >= 4 && double.TryParse(parts[3], System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
-                    _history.Add((at, pct, w, volts));
+                    double draw = parts.Length >= 5 && double.TryParse(parts[4], System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : Math.Max(0, -w);   // older files: the battery drain
+                    _history.Add((at, pct, w, volts, draw));
                 }
             }
         }
@@ -454,8 +473,8 @@ public sealed partial class MainWindow : Window
         ChargeArea.Points = area;
 
         // in and out, each on its own scale that grows to fit
-        DrawWatts(_history.Select(s => (s.At, Math.Max(0, s.Watts))).ToList(), InLine, InArea, InScale);
-        DrawWatts(_history.Select(s => (s.At, Math.Max(0, -s.Watts))).ToList(), OutLine, OutArea, OutScale);
+        DrawWatts(_history.Select(s => (s.At, Math.Max(0, s.Draw + s.Watts))).ToList(), InLine, InArea, InScale);
+        DrawWatts(_history.Select(s => (s.At, Math.Max(0, s.Draw))).ToList(), OutLine, OutArea, OutScale);
 
         void DrawWatts(List<(DateTime At, double W)> series, Microsoft.UI.Xaml.Shapes.Polyline line, Microsoft.UI.Xaml.Shapes.Polygon fill, TextBlock scale)
         {
@@ -495,41 +514,66 @@ public sealed partial class MainWindow : Window
         if (Settings.ShowStats)
         {
             ChargeStats.Text = StatsLine(_history.Select(s => s.Percent), "%", "0");
-            InStats.Text = StatsLine(_history.Where(s => s.Watts > 0).Select(s => s.Watts), "W", "0.0");
-            OutStats.Text = StatsLine(_history.Where(s => s.Watts < 0).Select(s => -s.Watts), "W", "0.0");
+            InStats.Text = StatsLine(_history.Where(s => s.Draw + s.Watts > 0).Select(s => s.Draw + s.Watts), "W", "0.0");
+            OutStats.Text = StatsLine(_history.Where(s => s.Draw > 0).Select(s => s.Draw), "W", "0.0");
             VoltsStats.Text = StatsLine(withVolts.Select(s => s.Volts), "V", "0.00");
         }
     }
 
-    /// <summary>Low, average and high for what each graph is showing, in a line under it.</summary>
+    /// <summary>
+    /// Low, average and high for what each graph is showing, in a line under it. On and off are mirror images:
+    /// the lines fade and drift while their height opens or closes and the window edge slides, all in one beat,
+    /// so nothing ever snaps.
+    /// </summary>
     private async void SetStats(bool on, bool apply = true)
     {
         Settings.ShowStats = on;
         SlideKnob(StatsKnobSlide, StatsPill, on, apply);
         var lines = new[] { ChargeStats, InStats, OutStats, VoltsStats };
-        if (!apply)
+        bool graphsShowing = Graphs.Visibility == Visibility.Visible;
+        if (!apply || !graphsShowing)
         {
-            foreach (var line in lines) line.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var line in lines) { line.Visibility = on ? Visibility.Visible : Visibility.Collapsed; line.Height = StatsLineDip; }
             return;
         }
-        bool graphsShowing = Graphs.Visibility == Visibility.Visible;
+        const int ms = 180;
+        int before = AppWindow.ClientSize.Height;
         if (on)
         {
-            // the lines take their place, then pop in: a quick fade with a small rise
-            int before = AppWindow.ClientSize.Height;
-            foreach (var line in lines) { ElementCompositionPreview.GetElementVisual(line).Opacity = 0; line.Visibility = Visibility.Visible; }
-            if (graphsShowing) DrawGraphs();
-            var slide = graphsShowing ? SlideWindowHeight(before, Px(DesignHeight), 160) : Task.CompletedTask;
-            await Task.WhenAll(lines.Select(line => PlayOn(ElementCompositionPreview.GetElementVisual(line), 140, ("Opacity", 0f, 1f), ("Translation.Y", 4f, 0f))));
-            await slide;
+            foreach (var line in lines) { ElementCompositionPreview.GetElementVisual(line).Opacity = 0; line.Height = 0; line.Visibility = Visibility.Visible; }
+            DrawGraphs();
+            var slide = SlideWindowHeight(before, Px(DesignHeight), ms);
+            var open = AnimateHeight(lines, 0, StatsLineDip, ms);
+            await Task.WhenAll(lines.Select(line => PlayOn(ElementCompositionPreview.GetElementVisual(line), ms, ("Opacity", 0f, 1f), ("Translation.Y", 4f, 0f))));
+            await Task.WhenAll(slide, open);
         }
         else
         {
-            int before = AppWindow.ClientSize.Height;
-            await Task.WhenAll(lines.Select(line => PlayOn(ElementCompositionPreview.GetElementVisual(line), 90, ("Opacity", 1f, 0f), ("Translation.Y", 0f, 4f))));
-            foreach (var line in lines) line.Visibility = Visibility.Collapsed;
-            if (graphsShowing) await SlideWindowHeight(before, Px(DesignHeight), 140);
+            var slide = SlideWindowHeight(before, Px(DesignHeight), ms);
+            var close = AnimateHeight(lines, StatsLineDip, 0, ms);
+            await Task.WhenAll(lines.Select(line => PlayOn(ElementCompositionPreview.GetElementVisual(line), ms, ("Opacity", 1f, 0f), ("Translation.Y", 0f, 4f))));
+            await Task.WhenAll(slide, close);
+            foreach (var line in lines) { line.Visibility = Visibility.Collapsed; line.Height = StatsLineDip; }
         }
+        UpdateRegions();
+    }
+
+    /// <summary>Animate the layout height of some elements, eased the same way the window edge is.</summary>
+    private static Task AnimateHeight(IEnumerable<FrameworkElement> elements, double from, double to, int ms)
+    {
+        var done = new TaskCompletionSource();
+        var sb = new Microsoft.UI.Xaml.Media.Animation.Storyboard();
+        var ease = new Microsoft.UI.Xaml.Media.Animation.CubicEase { EasingMode = Microsoft.UI.Xaml.Media.Animation.EasingMode.EaseOut };
+        foreach (var e in elements)
+        {
+            var a = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation { From = from, To = to, Duration = TimeSpan.FromMilliseconds(ms), EasingFunction = ease, EnableDependentAnimation = true };
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTarget(a, e);
+            Microsoft.UI.Xaml.Media.Animation.Storyboard.SetTargetProperty(a, "Height");
+            sb.Children.Add(a);
+        }
+        sb.Completed += (_, _) => done.TrySetResult();
+        sb.Begin();
+        return done.Task;
     }
 
     private static string StatsLine(IEnumerable<double> values, string unit, string format)
@@ -543,7 +587,7 @@ public sealed partial class MainWindow : Window
     /// Hover a chart and the caption on its right shows the value and time under the pointer, with a hairline
     /// at that spot. The caption goes back to the scale when the pointer leaves.
     /// </summary>
-    private void ChartHover(Canvas chart, Microsoft.UI.Xaml.Shapes.Rectangle hair, TextBlock caption, Func<(DateTime At, double Percent, double Watts, double Volts), string> label, Func<DateTime?> firstSample)
+    private void ChartHover(Canvas chart, Microsoft.UI.Xaml.Shapes.Rectangle hair, TextBlock caption, Func<(DateTime At, double Percent, double Watts, double Volts, double Draw), string> label, Func<DateTime?> firstSample)
     {
         string? restore = null;
         chart.PointerMoved += (_, e) =>
@@ -570,7 +614,6 @@ public sealed partial class MainWindow : Window
     // ------------------------------------------------------------ the ring mark
 
     private int _iconPercent = -1;
-    private nint _taskbarIcon;
 
     /// <summary>Clockwise arc from 12 o'clock, as path geometry.</summary>
     private static Microsoft.UI.Xaml.Media.Geometry Arc(double cx, double cy, double radius, double fraction)
@@ -583,23 +626,42 @@ public sealed partial class MainWindow : Window
         return (Microsoft.UI.Xaml.Media.Geometry)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(typeof(Microsoft.UI.Xaml.Media.Geometry), data);
     }
 
-    /// <summary>The taskbar button shows the same ring, redrawn whenever the whole-number percent changes.</summary>
+    /// <summary>The taskbar button wears the app's own icon, the blue rounded tile from the Store; the level lives in the tray and the title bar ring.</summary>
     private void UpdateTaskbarIcon(int percent)
     {
-        if (percent == _iconPercent)
-            return;
+        if (_iconPercent != -1)
+            return;   // set once
         _iconPercent = percent;
-        nint fresh = TrayIcon.RenderRing(32, percent / 100.0);
-        AppWindow.SetIcon(Microsoft.UI.Win32Interop.GetIconIdFromIcon(fresh));
-        if (_taskbarIcon != 0)
-            TrayIcon.Destroy(_taskbarIcon);
-        _taskbarIcon = fresh;
+        // The icon built into the exe itself (ApplicationIcon in the project), so packaged and plain builds agree.
+        nint icon = LoadImageW(GetModuleHandleW(null), 32512, 1 /* IMAGE_ICON */, 0, 0, 0x8000 /* LR_SHARED */ | 0x40 /* LR_DEFAULTSIZE */);
+        if (icon != 0)
+            AppWindow.SetIcon(Microsoft.UI.Win32Interop.GetIconIdFromIcon(icon));
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern nint LoadImageW(nint module, nint name, uint type, int cx, int cy, uint flags);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern nint GetModuleHandleW(string? name);
+
+    /// <summary>A soft arrival: the element fades up from half and rises a couple of pixels into place.</summary>
+    private static void SettleIn(UIElement element)
+    {
+        var visual = ElementCompositionPreview.GetElementVisual(element);
+        var ease = visual.Compositor.CreateCubicBezierEasingFunction(new Vector2(0, 0), new Vector2(0, 1));
+        var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
+        fade.InsertKeyFrame(0f, 0.4f);
+        fade.InsertKeyFrame(1f, 1f, ease);
+        fade.Duration = TimeSpan.FromMilliseconds(320);
+        var rise = visual.Compositor.CreateScalarKeyFrameAnimation();
+        rise.InsertKeyFrame(0f, 3f);
+        rise.InsertKeyFrame(1f, 0f, ease);
+        rise.Duration = TimeSpan.FromMilliseconds(320);
+        visual.StartAnimation("Opacity", fade);
+        visual.StartAnimation("Translation.Y", rise);
     }
 
     /// <summary>A short fade-in on the parts that change when charging starts or stops.</summary>
     private void Settle()
     {
-        foreach (var element in new UIElement[] { StateRow, InBlock, OutBlock, TimeRow })
+        foreach (var element in new UIElement[] { StateRow, InBlock, OutBlock, NetBlock })
         {
             var visual = ElementCompositionPreview.GetElementVisual(element);
             var fade = visual.Compositor.CreateScalarKeyFrameAnimation();
@@ -629,28 +691,55 @@ public sealed partial class MainWindow : Window
 
     private DateTime _movingUntil;
 
-    private void Tick()
+    private bool _readInFlight;
+    private DateTime _diagnosticsAt = DateTime.MinValue;   // the same text as Copy diagnostics, kept fresh in the data folder for support
+
+    /// <summary>
+    /// The read happens off the UI thread. Asking the battery driver is normally instant, but around a plug or
+    /// unplug the firmware is busy and one answer can take most of a second; on the UI thread that froze the
+    /// window and every frame-driven motion in it. One read in flight at a time; a slow one just skips ticks.
+    /// </summary>
+    private async void Tick()
     {
-        if (DateTime.UtcNow < _movingUntil) return;   // mid-drag: leave the frames to Windows
+        if (DateTime.UtcNow < _movingUntil || _held || _readInFlight) return;   // mid-drag of the window or of him: leave the frames alone
+        _readInFlight = true;
+        Reading? r;
         try
         {
-            Show(BatteryReader.Read());
+            r = await Task.Run(BatteryReader.Read);
         }
         catch (Exception e)
         {
+            _readInFlight = false;
             StateText.Text = "error: " + e.Message;
+            return;
+        }
+        _readInFlight = false;
+        if (DateTime.UtcNow < _movingUntil || _held) return;
+        try { Show(r); }
+        catch (Exception e) { StateText.Text = "error: " + e.Message; }
+        if ((DateTime.UtcNow - _diagnosticsAt).TotalSeconds >= 60)
+        {
+            _diagnosticsAt = DateTime.UtcNow;
+            try { File.WriteAllText(Path.Combine(Settings.DataFolder, "diagnostics.txt"), BatteryReader.Diagnostics()); } catch { }
         }
     }
 
     private void Show(Reading? r)
     {
         _reading = r;
+        if (r is not null)
+        {
+            var t = DateTime.UtcNow;
+            _drawSamples.Enqueue((t, r.LaptopWatts, r.OnAc ? r.ChargerWatts : 0));
+            while (_drawSamples.Count > 0 && (t - _drawSamples.Peek().At).TotalSeconds > AverageSeconds) _drawSamples.Dequeue();
+        }
         RecordHistory(r);
         if (r is null)
         {
             PercentText.Text = "—";
-            StateText.Text = "No battery found"; StateRest.Text = "";
-            InText.Text = OutText.Text = TimeText.Text = StoredText.Text = HealthText.Text = VoltageText.Text = "—";
+            StateText.Text = "No battery found";
+            InText.Text = OutText.Text = NetText.Text = StoredText.Text = HealthText.Text = VoltageText.Text = "—";
             _samples.Clear();
             _tray.Set("—", "No battery found");
             return;
@@ -676,12 +765,7 @@ public sealed partial class MainWindow : Window
         double? avg = Average();
         double? est = Estimate();
 
-        bool low = r.Percent <= 15 && !r.OnAc;
-        var color = low ? Brush("Low") : Brush("Ink");
         PercentText.Text = $"{r.Percent:0}%";
-        PercentText.Foreground = color;
-        BarFill.Fill = color;
-        RingFill.Stroke = color;
         int shownPercent = (int)Math.Round(r.Percent);
         if (shownPercent != _iconPercent)
         {
@@ -689,43 +773,79 @@ public sealed partial class MainWindow : Window
             ElementCompositionPreview.GetElementVisual(BarFill).Scale = new Vector3((float)(r.Percent / 100), 1, 1);
         }
         UpdateTaskbarIcon(shownPercent);
-        Bolt.Visibility = r.Charging ? Visibility.Visible : Visibility.Collapsed;
         if (_wasCharging is not null && _wasCharging != r.Charging)
             Settle();   // plugged in or out: let the new numbers fade in instead of snapping
         _wasCharging = r.Charging;
 
-        string state = r.Charging ? "Charging" + (est is { } h1 ? $" · full in {Hours(h1)}" : "")
-                     : r.OnAc ? (r.Percent >= 99 ? "Plugged in · full" : "Plugged in · holding")
-                     : "On battery" + (est is { } h2 ? $" · {Hours(h2)} left" : "");
-        // "Charging" then the bolt, then the rest of the line
+        // While the estimate is still settling the slot shows a dash, so the line keeps its shape; when the
+        // number arrives the line eases in rather than flicking over.
+        string hoursText = Hours(est);
+        if (_lastHoursText == "—" && hoursText != "—")
+            SettleIn(StateText);
+        _lastHoursText = hoursText;
+        // A single zero-rate read mid-charge must not flick the line to "holding" and back: charging sticks for a few seconds
+        if (r.Charging) _lastChargingAt = now;
+        bool charging = r.Charging || (r.OnAc && r.Percent < 100 && (now - _lastChargingAt).TotalSeconds < 4);
+        string state = charging ? $"Charging · full in {Hours(est)}"
+                     : r.Draining ? $"Plugged in · draining · {Hours(est)} left"
+                     : r.OnAc ? (r.Percent >= 99 ? "Plugged in · full" : r.ChargerTooWeak ? "Plugged in · weak charger" : "Plugged in · holding")
+                     : $"On battery · {Hours(est)} left";
+        // "Charging", then the bolt as part of the same line of text, then the rest
         int dot = state.IndexOf(" · ");
-        StateText.Text = dot < 0 ? state : state[..dot];
-        StateRest.Text = dot < 0 ? "" : state[(dot + 1)..];
+        StateText.Inlines.Clear();
+        StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = dot < 0 ? state : state[..dot] });
+        if (charging)
+            StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " ", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 9.5 });
+        if (dot >= 0)
+            StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " " + state[(dot + 1)..] });
 
         var lit = Brush("Ink");
         var faint = Brush("InkFaint");
-        InText.Text = $"{Watts(r.WattsIn)} W";
-        InText.Foreground = r.WattsIn > 0 ? Brush("Accent") : faint;
-        // On the charger the laptop runs off the wall, so the battery drain is genuinely
-        // zero and the laptop's own draw isn't measurable. Show a dash, not a fake number.
-        OutText.Text = r.OnAc ? "—" : $"{Watts(r.WattsOut)} W";
-        OutText.Foreground = r.WattsOut > 0 ? lit : faint;
-        InSub.Text = r.Watts is null ? "not reported" : r.WattsIn > 0 && avg is { } a1 ? $"avg {Watts(a1)} W" : "from charger";
-        OutSub.Text = r.Watts is null ? "not reported" : r.OnAc ? "powered by charger" : r.WattsOut > 0 && avg is { } a2 ? $"avg {Watts(-a2)} W" : "to laptop";
+        // A battery that reports no rate shows a dash, never a made-up zero, and the caption says why.
+        // IN is what the charger puts out, OUT is what the laptop uses, NET beneath them is what the battery
+        // sees: IN minus OUT, positive filling, negative emptying. NET is the one number the battery reports
+        // directly; on the charger OUT is the processor meter plus the learned overhead, and IN is OUT plus NET.
+        // The row refreshes once a second so it reads like a gauge, not a ticker; a plug change refreshes it at once.
+        bool plugChanged = _wasCharging is not null && _wasCharging != r.Charging || _topOnAc != r.OnAc;
+        if (plugChanged || (now - _topShownAt).TotalMilliseconds >= 1000)
+        {
+            _topShownAt = now;
+            _topOnAc = r.OnAc;
+            string? noRate = r.Watts is not null ? null : r.Source == WattsSource.Measuring ? "measuring…" : "not reported";
+            double? laptop = r.LaptopWatts;
+            double? charger = !r.OnAc ? 0 : r.ChargerWatts;
+            string? noEstimate = !r.OnAc || laptop is not null ? null : r.Draw == DrawState.Calibrating ? "estimating…" : "not available";
+            string estTag = r.Source == WattsSource.Estimated ? "est. " : "";
 
-        TimeLabel.Text = r.Charging ? "Time to full" : "Time left";
-        TimeText.Text = Hours(est);
+            InText.Text = charger is { } cw ? $"{cw:0.0} W" : "—";
+            InText.Foreground = charger > 0 ? lit : faint;
+            InSub.Text = !r.OnAc ? "unplugged" : noEstimate ?? "charger";
+
+            OutText.Text = laptop is { } lw ? $"{lw:0.0} W" : "—";
+            OutText.Foreground = laptop > 0 ? lit : faint;
+            OutSub.Text = !r.OnAc ? (noRate ?? $"{estTag}laptop") : noEstimate ?? "est. laptop";
+
+            NetText.Text = r.Watts is { } nw ? $"{nw:0.0;-0.0;0.0} W" : "—";
+            NetText.Foreground = r.Watts is not (null or 0) ? lit : faint;
+            NetSub.Text = noRate ?? (estTag.Length > 0 ? "est." : "");   // the sign says which way; the state line says the rest
+        }
+        double? tipLaptop = r.LaptopWatts, tipCharger = !r.OnAc ? 0 : r.ChargerWatts;
+
         StoredText.Text = $"{Wh(r.RemainingMwh)} / {Wh(r.FullMwh)}";
         VoltageText.Text = r.Volts is { } v ? $"{v:0.00} V" : "—";
         HealthText.Text = (r.Health is { } health ? $"{health * 100:0}%" : "—") + (r.Cycles is { } c ? $" · {c} cycles" : "");
 
         string tip = $"{r.Percent:0}% · {state.ToLowerInvariant()}";
-        if (r.WattsIn > 0) tip += $" · in {Watts(r.WattsIn)} W";
-        if (r.WattsOut > 0) tip += $" · out {Watts(r.WattsOut)} W";
-        _tray.Set($"{r.Percent:0}", tip, low ? 0x007171F8u : 0x00FFFFFFu);
-        TaskbarProgress.Show(Hwnd, (int)Math.Round(r.Percent), low);
+        if (tipCharger > 0) tip += $" · in {tipCharger:0.0} W";
+        if (tipLaptop > 0) tip += $" · out {tipLaptop:0.0} W";
+        if (r.Watts is { } tn && tn != 0) tip += $" · net {tn:0.0;-0.0} W";
+        _tray.Set($"{r.Percent:0}", tip);
+        TaskbarProgress.Show(Hwnd, (int)Math.Round(r.Percent));
         KeepOnChargedBar();
     }
+
+    private double? AverageLaptop() { var v = _drawSamples.Where(s => s.Laptop is not null).Select(s => s.Laptop!.Value).ToList(); return v.Count == 0 ? null : v.Average(); }
+    private double? AverageCharger() { var v = _drawSamples.Where(s => s.Charger is not null).Select(s => s.Charger!.Value).ToList(); return v.Count == 0 ? null : v.Average(); }
 
     private double? Average(int seconds = AverageSeconds)
     {
@@ -747,7 +867,8 @@ public sealed partial class MainWindow : Window
         if (due)
         {
             double? raw = RawEstimate();
-            _shownHours = raw is null ? null : Math.Round(raw.Value * 12) / 12;   // to the nearest 5 minutes
+            // to the nearest 5 minutes; a first reading of a trickle can imply days, which is no estimate at all: drop it and try again next tick
+            _shownHours = raw is null or <= 0 or > 48 ? null : Math.Round(raw.Value * 12) / 12;
             _shownAt = now;
             _shownCharging = charging;
         }
@@ -758,8 +879,12 @@ public sealed partial class MainWindow : Window
     {
         if (_reading is not { } r)
             return null;
-        if (r.OnAc && (r.Percent >= 100 || !r.Charging))
-            return null;   // full, or holding on the charger: there is no "time to full"
+        if (r.OnAc && (r.Percent >= 100 || !r.Charging) && !r.Draining)
+            return null;   // full, or holding on the charger: there is no "time to full" (draining on a weak charger still counts down)
+        if (r.Watts is null && r.PercentPerHour is { } pph && pph != 0)
+            return r.Charging ? (pph > 0 ? (100 - r.Percent) / pph : null) : (pph < 0 ? r.Percent / -pph : null);   // no watts at all: the percent slope still gives a time
+        if (_samples.Count == 0 || (DateTime.UtcNow - _samples.Peek().At).TotalSeconds < 10)
+            return null;   // one or two readings are not an average: wait for ten seconds of them
         if (r is not { RemainingMwh: int remaining, FullMwh: > 0 } || Average(EstimateSeconds) is not double avg || avg == 0)
             return null;
         if ((avg < 0) != (r.Watts is < 0))
@@ -769,31 +894,75 @@ public sealed partial class MainWindow : Window
 
     // ------------------------------------------------------------ hover cards (built live, one plain sentence each)
 
+    // Every card: what the number is and what's happening, in plain words, two sentences.
+    // Quoted watts are averages over the last half minute, so the words describe the situation, not one blink of it.
+
+    private static string About(double? w) => w is { } v ? $"about {Math.Abs(v):0} W" : "—";
+
     private HoverCards.Card CardPercent()
     {
-        if (_reading is not { } r) return new("Charge", "—", ["No battery reading yet."]);
-        string line = r.Charging ? "How full the battery is, and it's filling up right now."
-                    : r.OnAc ? "How full the battery is. It's full and resting while the laptop runs off the charger."
-                    : r.Percent <= 15 ? "How full the battery is. Getting low, plug in soon."
-                    : "How full the battery is while you run on it.";
-        return new("Charge", $"{r.Percent:0}%", [line]);
+        if (_reading is not { } r) return new("Charge", "—", ["How full the battery is."]);
+        string now = r.Charging ? "It's filling up right now."
+                   : r.Draining ? "It's going down even with the charger in."
+                   : r.OnAc ? "It's full, and the laptop is running off the charger."
+                   : r.Percent <= 15 ? "Getting low. Plug in soon."
+                   : "The laptop is running on it.";
+        return new("Charge", $"{r.Percent:0}%", [$"How full the battery is. {now}"]);
     }
+
+    private static string SourceNote(Reading? r) => r?.Source switch
+    {
+        WattsSource.Estimated => " This battery doesn't report it directly, so it's worked out from how fast the level moves.",
+        WattsSource.Measuring => " This battery doesn't report it directly, so it's being measured. Give it a few minutes.",
+        WattsSource.Unavailable => " This battery can't report it.",
+        _ => ""
+    };
+
+    private static string Learning(Reading r) => r.Draw == DrawState.Calibrating
+        ? "Not yet: it needs a few minutes on battery first to learn this laptop. Unplug once and it'll know from then on."
+        : "This laptop can't report it. NET still shows whether the charger is keeping up.";
 
     private HoverCards.Card CardIn()
     {
         var r = _reading;
-        string line = r is null or { OnAc: false } ? "Power flowing from the charger into the battery. Nothing right now, because no charger is connected."
-                    : r.WattsIn == 0 ? "Power flowing from the charger into the battery. Nothing right now, because it's full and the laptop runs straight off the charger."
-                    : "Power flowing from the charger into the battery right now. Higher means faster charging, and it slows down on purpose near full.";
-        return new("In", $"{Watts(r?.WattsIn)} W", [line]);
+        const string what = "Energy coming in from the charger. ";
+        if (r is null or { OnAc: false })
+            return new("In", "0 W", [what + "None right now: nothing is plugged in."]);
+        if (AverageCharger() is { } charger && AverageLaptop() is { } laptop && Average() is { } net)
+        {
+            string split = net > 0.5 ? $"{About(laptop)} runs the laptop and {About(net)} fills the battery."
+                         : net < -0.5 ? $"not enough, so the battery is chipping in {About(net)}."
+                         : "all of it runs the laptop, since the battery is full.";
+            return new("In", About(charger), [what + $"Lately {About(charger)}: {split}"]);
+        }
+        return new("In", "—", [what + Learning(r)]);
     }
 
     private HoverCards.Card CardOut()
     {
         var r = _reading;
-        if (r is { OnAc: true })
-            return new("Out", "—", ["Power the laptop is taking from the battery. Nothing while plugged in, because it runs off the charger, and Windows can't measure what comes through the cable."]);
-        return new("Out", $"{Watts(r?.WattsOut)} W", ["Power the laptop is using from the battery right now. A bright screen, video calls and heavy work push it up; lower means it lasts longer."]);
+        const string what = "Energy the laptop is using. ";
+        if (r is null)
+            return new("Out", "—", [what]);
+        if (!r.OnAc)
+            return new("Out", About(AverageLaptop()), [what + $"Lately {About(AverageLaptop())}, all of it from the battery. A bright screen and heavy work push it up." + SourceNote(r)]);
+        if (AverageLaptop() is { } laptop)
+            return new("Out", About(laptop), [what + $"Lately {About(laptop)}, estimated while plugged in. A bright screen and heavy work push it up."]);
+        return new("Out", "—", [what + Learning(r)]);
+    }
+
+    private HoverCards.Card CardNet()
+    {
+        var r = _reading;
+        const string what = "In minus out: what's left for the battery. ";
+        if (r is null || r.Watts is null)
+            return new("Net", "—", [what + "No reading right now." + SourceNote(r)]);
+        double? avg = Average();
+        string now = !r.OnAc ? $"Nothing is coming in, so the battery is giving the laptop {About(avg)}."
+                   : avg > 0.5 ? $"Lately {About(avg)} is going into the battery, so the charger is keeping up."
+                   : avg < -0.5 ? $"Lately {About(avg)} is coming out of the battery even with the charger in, so this charger isn't keeping up."
+                   : "Nothing in or out: the battery is full.";
+        return new("Net", avg is { } a ? $"{a:0;-0;0} W" : "—", [what + now + SourceNote(r)]);
     }
 
     private HoverCards.Card CardTime()
@@ -801,35 +970,37 @@ public sealed partial class MainWindow : Window
         var r = _reading;
         var est = Estimate();
         if (r is null || est is null)
-            return new("Time", "—", ["No countdown right now. Plugged in and full means there's nothing to count down to."]);
+            return new("Time", "—", ["Nothing to count down yet. Give it a few seconds."]);
         if (r.Charging)
-            return new("Time to full", Hours(est), ["How long until the battery is full, at the speed it has been charging over the last five minutes."]);
-        return new("Time left", Hours(est), ["How long until the battery is empty if you keep using it the way you have for the last five minutes. A guide, not a promise."]);
+            return new("Time to full", Hours(est), ["How long until the battery is full, at the pace of the last few minutes."]);
+        if (r.Draining)
+            return new("Time left", Hours(est), ["How long until the battery is empty, even with the charger in, at the pace of the last few minutes."]);
+        return new("Time left", Hours(est), ["How long the battery will last if you keep going like the last few minutes. A guide, not a promise."]);
     }
 
     private HoverCards.Card CardStored()
     {
-        if (_reading is not { } r) return new("Stored", "—", []);
-        return new("Stored energy", Wh(r.RemainingMwh), [$"The actual energy in the battery, out of the {Wh(r.FullMwh)} a full charge holds today. This is the fuel in the tank; the percent is just the gauge."]);
+        if (_reading is not { } r) return new("Stored", "—", ["The energy in the battery right now."]);
+        return new("Stored", Wh(r.RemainingMwh), [$"The energy in the battery right now, out of the {Wh(r.FullMwh)} a full charge holds. The percent is just this as a gauge."]);
     }
 
     private HoverCards.Card CardVoltage()
     {
-        if (_reading is not { Volts: { } v }) return new("Voltage", "—", ["This battery doesn't report its voltage."]);
-        return new("Voltage", $"{v:0.00} V", ["The battery's electrical pressure. It creeps up as the battery fills and sags a little under heavy use; laptop batteries normally sit between about 11 and 17 volts."]);
+        if (_reading is not { Volts: { } v }) return new("Voltage", "—", ["The battery's voltage. This one doesn't report it."]);
+        return new("Voltage", $"{v:0.00} V", ["The battery's voltage. It rises as the battery fills and dips under heavy use."]);
     }
 
     private HoverCards.Card CardHealth()
     {
         if (_reading is not { Health: double health, DesignMwh: int design, FullMwh: int full } r)
-            return new("Health", "—", ["This battery doesn't report what it held when new."]);
-        string cycles = r.Cycles is int c ? $" It has been through {c} full charges' worth of use." : "";
-        return new("Health", $"{health * 100:0}%", [$"How much a full charge holds now ({Wh(full)}) compared with when the battery was new ({Wh(design)}). Batteries wear slowly; above about 80% is doing fine.{cycles}"]);
+            return new("Health", "—", ["What a full charge holds now versus when the battery was new. This one doesn't report it."]);
+        string cycles = r.Cycles is int c ? $" {c} charge cycles so far." : "";
+        return new("Health", $"{health * 100:0}%", [$"What a full charge holds now versus when the battery was new. Above 80% is fine.{cycles}"]);
     }
 
     // ------------------------------------------------------------ helpers
 
-    private static string Watts(double? w) => w is null ? "0.0" : $"{Math.Abs(w.Value):0.0}";
+    private static string Watts(double? w) => w is null ? "—" : $"{Math.Abs(w.Value):0.0}";
     private static string Wh(int? mwh) => mwh is null ? "—" : $"{mwh.Value / 1000.0:0.0} Wh";
 
     private static string Hours(double? h)
@@ -847,27 +1018,24 @@ public sealed partial class MainWindow : Window
     private const int StatsLineDip = 18;
     private int DesignHeight => HeightDip + (Graphs.Visibility == Visibility.Visible ? GraphsHeightDip + (Settings.ShowStats ? 4 * StatsLineDip : 0) : 0);
 
-    // ------------------------------------------------------------ drag from anywhere: Windows owns the whole window as a caption
+    // ------------------------------------------------------------ drag by the title bar: Windows owns that strip as a caption
 
-    // The entire client area is declared a caption, so a press anywhere starts Windows' own native drag
-    // (smooth, snap layouts, the lot). Passthrough regions punch holes for things that need the pointer:
-    // buttons, toggles, hover-card rows, charts, the settings panel and the little guy's strips.
+    // Only the title bar is a caption, so a press there starts Windows' own native drag (smooth, snap layouts, the
+    // lot) and everything below it is ordinary client area with ordinary input. The passthrough holes are for the
+    // three caption buttons, which need the pointer themselves.
     private Microsoft.UI.Input.InputNonClientPointerSource NonClient => Microsoft.UI.Input.InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
     private readonly List<RectInt32> _extraPassthrough = new();   // strips the party code adds (floor, ground, ladder)
-
     private void UpdateRegions()
     {
         if (Root.ActualWidth == 0) return;
-        var whole = new RectInt32(0, 0, AppWindow.ClientSize.Width, AppWindow.ClientSize.Height);
-        NonClient.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Caption, [whole]);
+        NonClient.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Caption, [RectOf(AppTitleBar)]);
 
         var holes = new List<RectInt32>();
         void Hole(FrameworkElement e) { if (e.Visibility == Visibility.Visible && e.ActualWidth > 0) holes.Add(RectOf(e)); }
-        foreach (var e in new FrameworkElement[] { SettingsButton, MinimizeButton, CloseButton, InBlock, OutBlock, TimeRow, StoredRow, VoltageRow, HealthRow })
+        foreach (var e in new FrameworkElement[] { SettingsButton, MinimizeButton, CloseButton })
             Hole(e);
-        if (_settingsOpen) Hole(SettingsPanel);   // not the scrim: it covers the window and would block dragging
-        if (Graphs.Visibility == Visibility.Visible) foreach (var c in new FrameworkElement[] { ChargeChart, InChart, OutChart, VoltsChart }) Hole(c);
-        holes.AddRange(_extraPassthrough);
+        if (_settingsOpen) Hole(SettingsPanel);   // its top overlaps the title bar strip
+        holes.AddRange(_extraPassthrough);        // the little guy's strips, in case one crosses the title bar
         NonClient.SetRegionRects(Microsoft.UI.Input.NonClientRegionKind.Passthrough, holes.ToArray());
     }
 

@@ -69,7 +69,7 @@ public sealed partial class MainWindow
     }
 
     /// <summary>He's on his way home (or about to be): the panel is his door, so it stays until he's through it.</summary>
-    private bool GoingHome => _exiting || _pendingExit;
+    private bool GoingHome => _exiting || _pendingParty == false;
 
     private async void CloseSettings()
     {
@@ -85,21 +85,30 @@ public sealed partial class MainWindow
 
     // ------------------------------------------------------------ the toggle
 
-    private bool _pendingExit;   // toggled off mid-sequence: he finishes what he's doing, then goes home
-    private bool _exiting;       // the walk-home-and-climb-in is playing
+    private bool? _pendingParty;   // toggled mid-sequence: the state wanted once he's finished what he's doing
+    private bool _exiting;         // the walk-home-and-climb-in is playing
+    private bool Out => Dancer.Visibility == Visibility.Visible;
+
+    /// <summary>A sequence just ended: if the toggle was flipped while it ran, honour where it landed.</summary>
+    private void ApplyPending()
+    {
+        if (_pendingParty is not { } want) return;
+        _pendingParty = null;
+        if (want != Out && !Busy && !_held) SetParty(want);
+    }
 
     private async void SetParty(bool on, bool animate = true)
     {
         Log($"toggle {(on ? "on" : "off")} busy={Busy} held={_held}");
         if (Busy || _held)
         {
-            // He's mid-fall, mid-climb, or in your hand. The toggle still flips; the exit waits its turn.
+            // He's mid-fall, mid-climb, mid-exit, or in your hand. The toggle still flips; the change waits its turn.
             Settings.PartyMode = on;
             SlideKnob(on, animate);
-            _pendingExit = !on;
+            _pendingParty = on;
             return;
         }
-        _pendingExit = false;
+        _pendingParty = null;
         Settings.PartyMode = on;
         SlideKnob(on, animate);
 
@@ -114,6 +123,7 @@ public sealed partial class MainWindow
         catch (OperationCanceledException) { }
         catch (Exception ex) { Recover(ex); }
         finally { Done(ct); }
+        ApplyPending();
     }
 
     /// <summary>The queued exit: runs once whatever he was doing has put him back on the bar.</summary>
@@ -124,6 +134,7 @@ public sealed partial class MainWindow
         catch (OperationCanceledException) { }
         catch (Exception ex) { Recover(ex); }
         finally { Done(ct); }
+        ApplyPending();
     }
 
     /// <summary>A sequence finished on its own: nothing is running now, unless something newer took over.</summary>
@@ -247,13 +258,17 @@ public sealed partial class MainWindow
         var local = e.GetCurrentPoint(Dancer).Position;
         var p = e.GetCurrentPoint(Root).Position;
         Freeze();
-        _grabOffset = new Point(Math.Clamp(local.X, 0, BodyW), Math.Clamp(local.Y, 0, BodyH));
+        // He's held by his hands: the arms go up and the cursor ends up where they meet, above his head. The grip
+        // point slides from where the pointer landed on him to his hands over the same beat as the arms rise.
+        _grabFrom = new Point(Math.Clamp(local.X, 0, BodyW), Math.Clamp(local.Y, 0, BodyH));
+        _grabOffset = _grabFrom;
+        _grabAt = DateTime.UtcNow;
         Body.Properties.InsertVector3("Translation", new Vector3((float)(p.X - _grabOffset.X), (float)(p.Y - _grabOffset.Y), 0));
         Body.Opacity = 1;
-        Body.CenterPoint = new Vector3(BodyW / 2, 6, 0);       // held by the scruff: he pivots at the head
+        StartSwing(p);                                        // position and tilt both move once per frame from here on
         HideLadder();
         if (!Settings.PartyMode) { Settings.PartyMode = true; SlideKnob(true, true); }   // grabbed mid-exit: he's out again
-        _pendingExit = false;
+        _pendingParty = null;
         _ = Limbs(160, 150, -150, 8, -8);                      // arms up, legs dangling
         e.Handled = true;
     }
@@ -262,11 +277,7 @@ public sealed partial class MainWindow
     {
         if (!_held) return;
         var p = e.GetCurrentPoint(Root).Position;
-        var was = Where();
-        float x = (float)(p.X - _grabOffset.X), y = (float)(p.Y - _grabOffset.Y);
-        Body.Properties.InsertVector3("Translation", new Vector3(x, y, 0));
-        float swing = Math.Clamp((x - was.X) * 2.5f, -35, 35);  // he swings with the motion
-        Body.StartAnimation("RotationAngleInDegrees", Scalar(Smooth, (1, swing)).With(120));
+        _hand = new Vector2((float)p.X, (float)p.Y);         // the frame loop moves him; nothing else happens per event
         e.Handled = true;
     }
 
@@ -274,6 +285,7 @@ public sealed partial class MainWindow
     {
         if (!_held) return;
         _held = false;
+        StopSwing();
         Dancer.ReleasePointerCaptures();
         e.Handled = true;
         var ct = Begin();
@@ -286,6 +298,13 @@ public sealed partial class MainWindow
     /// <summary>Let go: over the bar he lands on it; anywhere else he falls to the bottom and ladders back up.</summary>
     private async Task DropAsync(CancellationToken ct)
     {
+        // let go mid-swing: he rights himself about the hand that held him, then the pivot moves to his feet for the landing
+        float tilt = Body.RotationAngleInDegrees % 360;
+        if (tilt > 180) tilt -= 360; else if (tilt < -180) tilt += 360;
+        Body.RotationAngleInDegrees = tilt;
+        if (Math.Abs(tilt) > 0.5f)
+            await Play(Math.Clamp((int)(Math.Abs(tilt) * 1.6f), 80, 260), (Body, "RotationAngleInDegrees", Scalar(Smooth, (1, 0))));
+        ct.ThrowIfCancellationRequested();
         var at = Where();
         Body.CenterPoint = new Vector3(BodyW / 2, BodyH, 0);
         bool overBar = at.X >= FloorLeft() - 4 && at.X <= FloorRight() + 4 && at.Y <= FloorY() + 2;
@@ -751,12 +770,13 @@ public sealed partial class MainWindow
     private void StartDancing()
     {
         PassthroughFor(FloorStrip());
-        if (_pendingExit)
+        if (_pendingParty == false)
         {
-            _pendingExit = false;
+            _pendingParty = null;
             _ = LeaveAsync();
             return;
         }
+        _pendingParty = null;   // wanted out, and he is
         var ct = Begin();
         _dancing = true;
         if (Ladder.Visibility == Visibility.Visible) _ = DropLadder();
@@ -950,6 +970,68 @@ public sealed partial class MainWindow
         batch.Completed += (_, _) => done.TrySetResult();
         batch.End();
         return done.Task;
+    }
+
+    // ------------------------------------------------------------ swaying in your hand
+
+    // The trick every drag-and-tilt UI uses (Framer Motion's useVelocity, react-spring's card stacks): the tilt follows
+    // how fast you're moving, capped so it can never go wild, and a spring smooths the tilt so it leans in as you speed
+    // up and settles upright as you stop. He pivots at the grab point, so he trails behind the hand like a thing on a hook.
+    private static readonly Point Hands = new(13, 1.5);   // where his raised hands meet, above his head: the grip
+    private const int GripMs = 160;                        // the grip slides from where you touched him to his hands over this long
+    private Point _grabFrom;
+    private DateTime _grabAt;
+    private const float TiltPerSpeed = 0.056f;   // degrees per px/s: 500 px/s across the window leans him about 28°
+    private const float MaxTilt = 35f;           // he leans, he never goes flat
+    private const float Stiffness = 160f;        // spring pulling the tilt toward its target
+    private const float SpringDamping = 20f;     // near critical: settles in a few hundred ms with a hint of overshoot
+    private Vector2 _hand, _pivot, _pivotVel;
+    private float _tilt, _tiltVel;
+    private DateTime _lastSwing;
+    private bool _swinging;
+
+    private void StartSwing(Point pointer)
+    {
+        _tilt = Body.RotationAngleInDegrees;
+        _tiltVel = 0;
+        _hand = _pivot = new Vector2((float)pointer.X, (float)pointer.Y);
+        _pivotVel = Vector2.Zero;
+        _lastSwing = DateTime.UtcNow;
+        Body.CenterPoint = new Vector3((float)_grabOffset.X, (float)_grabOffset.Y, 0);
+        if (!_swinging) { Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += SwingFrame; _swinging = true; }
+    }
+
+    private void StopSwing()
+    {
+        if (!_swinging) return;
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= SwingFrame;
+        _swinging = false;
+    }
+
+    private void SwingFrame(object? sender, object e)
+    {
+        var now = DateTime.UtcNow;
+        float dt = (float)Math.Clamp((now - _lastSwing).TotalSeconds, 0.001, 0.05);
+        _lastSwing = now;
+
+        // hand speed, smoothed: pointer events come in bursts and a raw frame-to-frame speed flickers
+        var vel = (_hand - _pivot) / dt;
+        _pivotVel = Vector2.Lerp(_pivotVel, vel, 0.3f);
+        _pivot = _hand;
+
+        // the grip slides to his hands, then stays; position follows the hand from the same frame as the tilt
+        float grip = Math.Clamp((float)(now - _grabAt).TotalMilliseconds / GripMs, 0, 1);
+        grip = 1 - (1 - grip) * (1 - grip);   // ease out
+        _grabOffset = new Point(_grabFrom.X + (Hands.X - _grabFrom.X) * grip, _grabFrom.Y + (Hands.Y - _grabFrom.Y) * grip);
+        Body.CenterPoint = new Vector3((float)_grabOffset.X, (float)_grabOffset.Y, 0);
+        Body.Properties.InsertVector3("Translation", new Vector3(_hand.X - (float)_grabOffset.X, _hand.Y - (float)_grabOffset.Y, 0));
+
+        // lean with the motion: moving right, his feet trail left (clockwise), and the other way round
+        float target = Math.Clamp(_pivotVel.X * TiltPerSpeed, -MaxTilt, MaxTilt);
+        float acc = Stiffness * (target - _tilt) - SpringDamping * _tiltVel;
+        _tiltVel += acc * dt;
+        _tilt += _tiltVel * dt;
+        Body.RotationAngleInDegrees = _tilt;
     }
 
     // ------------------------------------------------------------ body (compositor animations)

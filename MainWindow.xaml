@@ -40,8 +40,8 @@
 
         <StackPanel Grid.Row="1" Padding="28,0,28,22">
 
-            <!-- In / Out -->
-            <Grid Margin="0,18,0,22">
+            <!-- In / Out: what the charger gives, what the laptop uses -->
+            <Grid Margin="0,18,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -51,7 +51,7 @@
                 <StackPanel x:Name="InBlock" Grid.Column="0" Background="Transparent">
                     <TextBlock Text="IN" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Center" />
                     <TextBlock Foreground="{StaticResource Ink}" x:Name="InText" Text="—" FontFamily="Segoe UI Variable Display" FontSize="36" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,2,0,0" />
-                    <TextBlock x:Name="InSub" Text="from charger" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="InSub" Text="charger" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Center" />
                 </StackPanel>
 
                 <Rectangle Grid.Column="1" Width="1" Fill="{StaticResource Line}" Margin="0,4" />
@@ -59,29 +59,34 @@
                 <StackPanel x:Name="OutBlock" Grid.Column="2" Background="Transparent">
                     <TextBlock Text="OUT" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Center" />
                     <TextBlock Foreground="{StaticResource Ink}" x:Name="OutText" Text="—" FontFamily="Segoe UI Variable Display" FontSize="36" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,2,0,0" />
-                    <TextBlock x:Name="OutSub" Text="to laptop" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="OutSub" Text="laptop" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Center" />
                 </StackPanel>
             </Grid>
+
+            <!-- Net: drawn from both columns above and shown beneath them. What the battery itself sees. -->
+            <StackPanel x:Name="NetBlock" Background="Transparent" Margin="0,6,0,16">
+                <Path Stroke="{StaticResource Line}" StrokeThickness="1" HorizontalAlignment="Center" Data="M0,0 L0,5 Q0,9 4,9 L138,9 Q142,9 142,5 L142,0 M71,9 L71,16" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="6" Margin="0,2,0,0">
+                    <TextBlock Text="NET" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="NetText" Text="—" Style="{StaticResource BodyStrongTextBlockStyle}" Foreground="{StaticResource Ink}" VerticalAlignment="Center" />
+                    <TextBlock x:Name="NetSub" Text="" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" VerticalAlignment="Center" />
+                </StackPanel>
+            </StackPanel>
 
             <!-- Percent -->
             <StackPanel x:Name="PercentBlock" Background="Transparent">
                 <TextBlock Foreground="{StaticResource Ink}" x:Name="PercentText" Text="—" FontFamily="Segoe UI Variable Display" FontSize="68" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,0,0,-6" />
-                <StackPanel x:Name="StateRow" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="5">
+                <StackPanel x:Name="StateRow" Orientation="Horizontal" HorizontalAlignment="Center">
+                    <!-- one text run: the bolt is an inline glyph, so it sits on the baseline and gets a real space each side -->
                     <TextBlock x:Name="StateText" Text="Reading battery…" Style="{StaticResource BodyTextBlockStyle}" Foreground="{StaticResource InkMuted}" VerticalAlignment="Center" />
-                    <FontIcon x:Name="Bolt" Glyph="&#xE945;" FontSize="12" Foreground="{StaticResource InkMuted}" VerticalAlignment="Center" Visibility="Collapsed" />
-                    <TextBlock x:Name="StateRest" Text="" Style="{StaticResource BodyTextBlockStyle}" Foreground="{StaticResource InkMuted}" VerticalAlignment="Center" />
                 </StackPanel>
                 <Border x:Name="BarTrack" Height="6" CornerRadius="3" Margin="0,30,0,0" Background="{StaticResource Line}">
-                    <Rectangle x:Name="BarFill" RadiusX="3" RadiusY="3" Fill="{StaticResource Accent}" HorizontalAlignment="Stretch" />
+                    <Rectangle x:Name="BarFill" RadiusX="3" RadiusY="3" Fill="{StaticResource Ink}" HorizontalAlignment="Stretch" />
                 </Border>
             </StackPanel>
 
 
             <!-- Details -->
-            <Grid x:Name="TimeRow" Background="Transparent" Padding="0,6">
-                <TextBlock x:Name="TimeLabel" Text="Time left" Style="{StaticResource BodyTextBlockStyle}" Foreground="{StaticResource InkMuted}" />
-                <TextBlock Foreground="{StaticResource Ink}" x:Name="TimeText" Text="—" Style="{StaticResource BodyStrongTextBlockStyle}" HorizontalAlignment="Right" />
-            </Grid>
             <Grid x:Name="StoredRow" Background="Transparent" Padding="0,6">
                 <TextBlock Text="Stored" Style="{StaticResource BodyTextBlockStyle}" Foreground="{StaticResource InkMuted}" />
                 <TextBlock Foreground="{StaticResource Ink}" x:Name="StoredText" Text="—" Style="{StaticResource BodyStrongTextBlockStyle}" HorizontalAlignment="Right" />
@@ -113,13 +118,13 @@
                 </StackPanel>
                 <StackPanel Spacing="4">
                     <Grid>
-                        <TextBlock Text="IN" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" />
+                        <TextBlock Text="IN · CHARGER" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" />
                         <TextBlock x:Name="InScale" Text="" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Right" />
                     </Grid>
                     <Border Height="52" CornerRadius="6" Background="{StaticResource Line}">
                         <Canvas x:Name="InChart" Height="52" Background="Transparent">
-                            <Polygon x:Name="InArea" Fill="{StaticResource Accent}" Opacity="0.25" />
-                            <Polyline x:Name="InLine" Stroke="{StaticResource Accent}" StrokeThickness="1.5" StrokeLineJoin="Round" />
+                            <Polygon x:Name="InArea" Fill="{StaticResource Ink}" Opacity="0.25" />
+                            <Polyline x:Name="InLine" Stroke="{StaticResource Ink}" StrokeThickness="1.5" StrokeLineJoin="Round" />
                             <Rectangle x:Name="InHair" Width="1" Height="52" Fill="{StaticResource Ink}" Opacity="0" />
                         </Canvas>
                     </Border>
@@ -127,7 +132,7 @@
                 </StackPanel>
                 <StackPanel Spacing="4">
                     <Grid>
-                        <TextBlock Text="OUT" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" />
+                        <TextBlock Text="OUT · LAPTOP" Style="{StaticResource CaptionTextBlockStyle}" FontWeight="SemiBold" Foreground="{StaticResource InkMuted}" />
                         <TextBlock x:Name="OutScale" Text="" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{StaticResource InkMuted}" HorizontalAlignment="Right" />
                     </Grid>
                     <Border Height="52" CornerRadius="6" Background="{StaticResource Line}">

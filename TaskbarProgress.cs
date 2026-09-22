@@ -7,25 +7,23 @@ namespace BatteryChecker;
 /// The level shown on the taskbar button itself. Windows picks a packaged
 /// app's taskbar icon from the package, so we can't redraw that; what it
 /// does allow is the progress fill that downloads use, so the button shows
-/// the battery level as a fill, red when low.
+/// the battery level as a fill.
 /// </summary>
 public static partial class TaskbarProgress
 {
-    private const int TBPF_NORMAL = 2, TBPF_ERROR = 4;
+    private const int TBPF_NORMAL = 2;
     private static ITaskbarList3? _taskbar;
     private static int _lastPercent = -1;
-    private static bool _lastLow;
 
-    public static void Show(nint hwnd, int percent, bool low)
+    public static void Show(nint hwnd, int percent)
     {
-        if (percent == _lastPercent && low == _lastLow)
+        if (percent == _lastPercent)
             return;
         _lastPercent = percent;
-        _lastLow = low;
         try
         {
             _taskbar ??= Create();
-            _taskbar.SetProgressState(hwnd, low ? TBPF_ERROR : TBPF_NORMAL);
+            _taskbar.SetProgressState(hwnd, TBPF_NORMAL);
             _taskbar.SetProgressValue(hwnd, (ulong)Math.Clamp(percent, 0, 100), 100);
         }
         catch
