@@ -123,7 +123,6 @@ c = background()
 party = Image.open(os.path.join(SHOTS, "party.png")).convert("RGBA")
 win = fit(party, 0.98)
 place(c, win, 1120, (H - win.height) // 2)
-headline(c, "There is no\nlittle dancing guy.",
-         "Absolutely not. And if there were, he wouldn't dance on the charged part of your bar, "
-         "climb down a ladder when you turn him off, or cry when you unplug.")
+headline(c, "What's with the\nlittle dancing guy?",
+         "I have no idea what you're talking about. All rumors are unconfirmed and baseless.")
 save(c, "screenshot-4.png")
