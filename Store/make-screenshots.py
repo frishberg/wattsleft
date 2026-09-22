@@ -3,7 +3,8 @@
 Inputs (2x captures, client area only, no window frame):
   shots/compact.png   the window without graphs
   shots/full.png      the window with graphs and stats on
-  shots/card.png      a real hover card, cropped from a live capture
+  shots/full80.png    the same window at 80%, for the hover shot
+  shots/card80.png    a real hover card, cropped from a live capture of that
   shots/party.png     the compact window with the little guy mid-dance on the bar
 Run:  python make-screenshots.py   (from this folder)
 """
@@ -86,7 +87,8 @@ def save(canvas, name):
 
 compact = Image.open(os.path.join(SHOTS, "compact.png")).convert("RGBA")
 full = Image.open(os.path.join(SHOTS, "full.png")).convert("RGBA")
-card = Image.open(os.path.join(SHOTS, "card.png")).convert("RGBA")
+full80 = Image.open(os.path.join(SHOTS, "full80.png")).convert("RGBA")
+card = Image.open(os.path.join(SHOTS, "card80.png")).convert("RGBA")
 
 # 1. the point of the app: the compact window, large, with the three numbers explained
 c = background()
@@ -109,7 +111,7 @@ save(c, "screenshot-2.png")
 # 3. hover: the window with a real card open beside OUT
 c = background()
 scale = 0.78
-win = fit(full, scale)
+win = fit(full80, scale)
 cd = fit(card, scale)
 wx, wy = 900, 110
 place(c, win, wx, wy)
@@ -124,5 +126,5 @@ party = Image.open(os.path.join(SHOTS, "party.png")).convert("RGBA")
 win = fit(party, 0.98)
 place(c, win, 1120, (H - win.height) // 2)
 headline(c, "What's with the\nlittle dancing guy?",
-         "I have no recollection of any dancing guy. These allegations are unsubstantiated.")
+         "These unconfirmed rumors are speculative and baseless. Next question.")
 save(c, "screenshot-4.png")
