@@ -4,6 +4,7 @@ Inputs (2x captures, client area only, no window frame):
   shots/compact.png   the window without graphs
   shots/full.png      the window with graphs and stats on
   shots/card.png      a real hover card, cropped from a live capture
+  shots/party.png     the compact window with the little guy mid-dance on the bar
 Run:  python make-screenshots.py   (from this folder)
 """
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
@@ -116,3 +117,13 @@ place(c, cd, wx + win.width + round(20 * scale), wy + round(142 * scale), radius
 headline(c, "Hover anything.\nIt explains itself.",
          "Two plain sentences for every number, with what the last half minute looked like.", width=700)
 save(c, "screenshot-3.png")
+
+# 4. the little guy, who does not exist
+c = background()
+party = Image.open(os.path.join(SHOTS, "party.png")).convert("RGBA")
+win = fit(party, 0.98)
+place(c, win, 1120, (H - win.height) // 2)
+headline(c, "There is no\nlittle dancing guy.",
+         "Absolutely not. And if there were, he wouldn't dance on the charged part of your bar, "
+         "climb down a ladder when you turn him off, or cry when you unplug.")
+save(c, "screenshot-4.png")
