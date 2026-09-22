@@ -55,6 +55,20 @@ public static class Settings
         set => Set("graphsOn", value);
     }
 
+    /// <summary>The learned rest-of-machine cost (screen, drive, radios) in milliwatts, or null if not learned yet.</summary>
+    public static int? LearnedOverheadMilliwatts
+    {
+        get => Get("overheadMw") as int?;
+        set { if (value is { } v) Set("overheadMw", v); else Remove("overheadMw"); }
+    }
+
+    /// <summary>How many seconds on battery went into that figure.</summary>
+    public static int? LearnedOverheadSeconds
+    {
+        get => Get("overheadSec") as int?;
+        set { if (value is { } v) Set("overheadSec", v); else Remove("overheadSec"); }
+    }
+
     public static async Task<bool> StartsWithWindowsAsync()
     {
         if (!IsPackaged)
@@ -103,6 +117,13 @@ public static class Settings
         if (IsPackaged) { ApplicationData.Current.LocalSettings.Values[key] = value; return; }
         Json[key] = JsonSerializer.SerializeToElement(value, value is bool ? SettingsJson.Default.Boolean : SettingsJson.Default.Int32);
         try { File.WriteAllText(JsonFile, JsonSerializer.Serialize(Json, SettingsJson.Default.DictionaryStringJsonElement)); } catch { }
+    }
+
+    private static void Remove(string key)
+    {
+        if (IsPackaged) { ApplicationData.Current.LocalSettings.Values.Remove(key); return; }
+        if (Json.Remove(key))
+            try { File.WriteAllText(JsonFile, JsonSerializer.Serialize(Json, SettingsJson.Default.DictionaryStringJsonElement)); } catch { }
     }
 
     private static readonly string JsonFile = Path.Combine(DataFolder, "settings.json");
