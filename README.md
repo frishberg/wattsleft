@@ -10,12 +10,8 @@
 &nbsp;
 <a href="../../releases"><img src="docs/btn-exe.svg" alt="Direct: download the .exe" height="54"></a>
 
-</div>
+<img src="docs/screenshot.png" width="270" alt="The Watt's Left window: charger watts in, laptop watts out, net for the battery, time to full, stored energy, voltage, health, and thirty-minute graphs">
 
-<br>
-
-<div align="center">
-  <img src="docs/screenshot.png" width="270" alt="The Watt's Left window: live watts in and out, time left, stored energy, voltage, health, and thirty-minute graphs">
 </div>
 
 ## What it shows
