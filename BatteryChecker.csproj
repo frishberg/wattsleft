@@ -25,7 +25,10 @@
   </PropertyGroup>
 
   <!-- `dotnet publish -p:Unpackaged=true` builds the plain .exe for wattsleft.app: no MSIX,
-       Windows App SDK carried inside the app folder, settings in %LocalAppData%\WattsLeft. -->
+       Windows App SDK carried inside the app folder, settings in %LocalAppData%\WattsLeft.
+       This build and the Store build share obj\ and bin\. Delete both before switching between them:
+       a Store package built on top of this one's leftovers shipped in 1.1.0 without a Windows App SDK
+       assembly in its deps.json and crashed on launch. -->
   <PropertyGroup Condition="'$(Unpackaged)' == 'true'">
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>

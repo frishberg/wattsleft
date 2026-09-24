@@ -99,31 +99,63 @@ public static class Settings
 
     // ---- storage -------------------------------------------------------------
 
+    // The window writes from the UI thread and the draw model from the reader's background thread, so every
+    // touch of the store goes through one lock. A damaged or hand-edited value reads as "not set", never a crash.
+    private static readonly object Gate = new();
+
     private static object? Get(string key)
     {
-        if (IsPackaged)
-            return ApplicationData.Current.LocalSettings.Values[key];
-        return Json.TryGetValue(key, out var v) ? v.ValueKind switch
+        lock (Gate)
         {
-            JsonValueKind.True => true,
-            JsonValueKind.False => false,
-            JsonValueKind.Number => v.GetInt32(),
-            _ => null,
-        } : null;
+            try
+            {
+                if (IsPackaged)
+                    return ApplicationData.Current.LocalSettings.Values[key];
+                return Json.TryGetValue(key, out var v) ? v.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    JsonValueKind.Number => v.TryGetInt32(out var n) ? n : null,
+                    _ => null,
+                } : null;
+            }
+            catch { return null; }
+        }
     }
 
     private static void Set(string key, object value)
     {
-        if (IsPackaged) { ApplicationData.Current.LocalSettings.Values[key] = value; return; }
-        Json[key] = JsonSerializer.SerializeToElement(value, value is bool ? SettingsJson.Default.Boolean : SettingsJson.Default.Int32);
-        try { File.WriteAllText(JsonFile, JsonSerializer.Serialize(Json, SettingsJson.Default.DictionaryStringJsonElement)); } catch { }
+        lock (Gate)
+        {
+            try
+            {
+                if (IsPackaged) { ApplicationData.Current.LocalSettings.Values[key] = value; return; }
+                Json[key] = JsonSerializer.SerializeToElement(value, value is bool ? SettingsJson.Default.Boolean : SettingsJson.Default.Int32);
+                Save();
+            }
+            catch { }
+        }
     }
 
     private static void Remove(string key)
     {
-        if (IsPackaged) { ApplicationData.Current.LocalSettings.Values.Remove(key); return; }
-        if (Json.Remove(key))
-            try { File.WriteAllText(JsonFile, JsonSerializer.Serialize(Json, SettingsJson.Default.DictionaryStringJsonElement)); } catch { }
+        lock (Gate)
+        {
+            try
+            {
+                if (IsPackaged) { ApplicationData.Current.LocalSettings.Values.Remove(key); return; }
+                if (Json.Remove(key)) Save();
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>Write to a side file and swap it in, so a crash or power cut mid-write never leaves half a file.</summary>
+    private static void Save()
+    {
+        string tmp = JsonFile + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(Json, SettingsJson.Default.DictionaryStringJsonElement));
+        File.Move(tmp, JsonFile, overwrite: true);
     }
 
     private static readonly string JsonFile = Path.Combine(DataFolder, "settings.json");

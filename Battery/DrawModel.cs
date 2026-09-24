@@ -4,8 +4,8 @@ namespace BatteryChecker.Battery;
 public enum DrawState
 {
     Unavailable,   // this machine doesn't expose a processor power meter
-    Calibrating,   // it does, but the rest-of-machine cost hasn't been learned yet: needs a few minutes on battery
-    Ready          // estimating
+    Calibrating,   // it does, but the rest-of-machine cost is still a typical guess or only partly learned: rough
+    Ready          // learned from a couple of minutes on battery
 }
 
 /// <summary>
@@ -19,21 +19,26 @@ public sealed class DrawModel
 {
     private const double CpuSmoothingSeconds = 3;       // the meter is spiky; the estimate should read steady but follow real changes
     private const double OverheadSmoothingSeconds = 120;   // the overhead moves slowly (brightness, radios), so smooth it slowly
-    private const double NeededSeconds = 120;            // this much battery time before the overhead is trusted
-    private const double SettleSeconds = 45;             // after a plug or unplug, the battery rate takes a while to mean anything
-    private const double MinOverhead = -1.5, MaxOverhead = 60;   // outside this the meter and the battery disagree so badly that the units must be wrong
+    private const double NeededSeconds = 120;            // this much battery time before the overhead is fully trusted
+    private const double SettleSeconds = 20;             // after a plug or unplug, the battery rate takes a moment to mean anything
+    private const double TypicalOverhead = 6;            // screen, drive, radios and fans on a typical laptop: the guess until this one is learned
+    private const double TypicalPlatformOverhead = 1;    // the same guess when the meter already covers the whole platform (Intel's Psys)
+    private const double MinOverhead = -1.5, MaxOverhead = 40;   // outside this the meter and the battery disagree so badly that one of them is wrong
+    private const double MeterGiveUpSeconds = 15;       // a meter that has said nothing for this long isn't going to
 
     private double? _cpuSmooth;
     private double? _overhead;
     private double _learnedSeconds;
     private DateTime _last = DateTime.MinValue;
+    private DateTime _firstFeed = DateTime.MinValue;
+    private bool _meterEverRead;
     private DateTime _acChangedAt = DateTime.MinValue;
     private DateTime _savedAt = DateTime.MinValue;
     private bool? _lastOnAc;
 
     public DrawModel()
     {
-        if (Settings.LearnedOverheadMilliwatts is { } mw && Settings.LearnedOverheadSeconds is { } s && s >= NeededSeconds)
+        if (Settings.LearnedOverheadMilliwatts is { } mw && Settings.LearnedOverheadSeconds is { } s && s > 0 && mw / 1000.0 is >= MinOverhead and <= MaxOverhead)
         {
             _overhead = mw / 1000.0;
             _learnedSeconds = s;
@@ -56,10 +61,16 @@ public sealed class DrawModel
     /// <param name="cpu">The processor meter's raw reading this tick, or null.</param>
     public void Feed(DateTime now, bool onAc, double? batteryWatts, bool batteryWattsTrusted, double? cpu)
     {
-        double dt = _last == DateTime.MinValue ? 0.25 : Math.Clamp((now - _last).TotalSeconds, 0.01, 5);
+        double gap = _last == DateTime.MinValue ? 0.25 : (now - _last).TotalSeconds;
         _last = now;
+        // a gap longer than a few seconds is sleep, a hidden window, or a stalled read: don't count it as time learned,
+        // and treat what follows like a fresh plug change, since the battery rate needs a moment to mean anything again
+        if (gap > 5) _acChangedAt = now;
+        double dt = Math.Clamp(gap, 0.01, 5);
         if (_lastOnAc != onAc) { _acChangedAt = now; _lastOnAc = onAc; }
 
+        if (_firstFeed == DateTime.MinValue) _firstFeed = now;
+        if (cpu is not null) _meterEverRead = true;
         if (cpu is { } c)
             _cpuSmooth = _cpuSmooth is { } prev ? prev + (c - prev) * Math.Min(1, dt / CpuSmoothingSeconds) : c;
         else if (!SystemPower.Available)
@@ -67,37 +78,40 @@ public sealed class DrawModel
 
         bool settled = (now - _acChangedAt).TotalSeconds > SettleSeconds;
 
-        // learn: on battery, with a trusted battery figure and a processor figure, the gap is the overhead
-        if (!onAc && settled && batteryWattsTrusted && batteryWatts is < 0 && _cpuSmooth is { } cpuNow)
+        // learn: on battery, with a trusted battery figure and a processor figure, the gap is the overhead. A gap far
+        // outside what any laptop has (a slope from two quick level steps, a meter spike) teaches nothing and is skipped.
+        if (!onAc && settled && batteryWattsTrusted && batteryWatts is < 0 && _cpuSmooth is { } cpuNow
+            && -batteryWatts.Value - cpuNow is var sample && sample is >= MinOverhead and <= MaxOverhead)
         {
-            double sample = -batteryWatts.Value - cpuNow;
-            _overhead = _overhead is { } o ? o + (sample - o) * Math.Min(1, dt / OverheadSmoothingSeconds) : sample;
             _learnedSeconds += dt;
-            if (_learnedSeconds >= NeededSeconds && (_overhead < MinOverhead || _overhead > MaxOverhead))
-            {
-                _overhead = null;      // the meter is not measuring what we think it is on this machine: start over
-                _learnedSeconds = 0;
-            }
-            if ((now - _savedAt).TotalSeconds > 30)
+            // a plain running average while it warms up, so the first minute counts fully; then a slow moving average
+            double weight = _learnedSeconds < NeededSeconds ? dt / _learnedSeconds : dt / OverheadSmoothingSeconds;
+            _overhead = _overhead is { } o ? o + (sample - o) * Math.Min(1, weight) : sample;
+            if ((now - _savedAt).TotalSeconds > 10)
             {
                 _savedAt = now;
-                Settings.LearnedOverheadMilliwatts = _overhead is { } ov ? (int)Math.Round(ov * 1000) : null;
+                Settings.LearnedOverheadMilliwatts = (int)Math.Round(_overhead.Value * 1000);
                 Settings.LearnedOverheadSeconds = (int)_learnedSeconds;
             }
         }
 
         bool learned = _overhead is not null && _learnedSeconds >= NeededSeconds;
-        State = !SystemPower.Available ? DrawState.Unavailable : learned ? DrawState.Ready : DrawState.Calibrating;
+        // a counter set that exists but never yields a reading (unknown instance names, nonsense values) is no meter at all
+        bool meterDead = !_meterEverRead && (now - _firstFeed).TotalSeconds > MeterGiveUpSeconds;
+        State = !SystemPower.Available || meterDead ? DrawState.Unavailable : learned ? DrawState.Ready : DrawState.Calibrating;
 
         if (!onAc)
         {
             LaptopWatts = batteryWatts is < 0 ? -batteryWatts.Value : null;   // on battery the truth is right there
             ChargerWatts = null;
         }
-        else if (learned && _cpuSmooth is { } cpuAc)
+        else if (_cpuSmooth is { } cpuAc)
         {
-            LaptopWatts = Math.Max(0.5, cpuAc + _overhead!.Value);
-            ChargerWatts = batteryWatts is { } b ? Math.Max(0, LaptopWatts.Value + b) : LaptopWatts;
+            // learned or not, show a figure straight away: until this laptop has run on battery, the typical overhead
+            double overhead = Math.Clamp(_overhead ?? (SystemPower.WholePlatform ? TypicalPlatformOverhead : TypicalOverhead), MinOverhead, MaxOverhead);
+            LaptopWatts = Math.Max(0.5, cpuAc + overhead);
+            // the charger is the laptop plus what goes into the battery; while the battery's rate is unknown, so is that
+            ChargerWatts = batteryWatts is { } b ? Math.Max(0, LaptopWatts.Value + b) : null;
         }
         else
         {

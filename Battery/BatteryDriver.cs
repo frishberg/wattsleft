@@ -20,6 +20,7 @@ public static unsafe partial class BatteryDriver
     public const int UnknownRate = int.MinValue;
     public const uint CapacityRelative = 0x40000000;
     private const uint SystemBattery = 0x80000000;
+    private const uint ShortTerm = 0x20000000;   // a UPS: a system battery in name, but not the laptop's
     private static readonly TimeSpan Rescan = TimeSpan.FromSeconds(30);   // how often to look for a battery that was just slotted in
 
     private static readonly Guid BatteryClass = new("72631E54-78A4-11D0-BCF7-00AA00B7B32A");
@@ -45,6 +46,7 @@ public static unsafe partial class BatteryDriver
             ulong capacity = 0, design = 0, full = 0;
             long rate = 0;
             bool anyCapacity = false, anyDesign = false, anyFull = false, anyRate = false;
+            bool someCapacityUnknown = false, someDesignUnknown = false, someFullUnknown = false;
 
             for (int i = _batteries.Count - 1; i >= 0; i--)
             {
@@ -52,9 +54,12 @@ public static unsafe partial class BatteryDriver
                 uint wait = 0, nowTag = 0;
                 if (!DeviceIoControl(handle, IOCTL_BATTERY_QUERY_TAG, &wait, 4, &nowTag, 4, out _, 0) || nowTag != tag)
                 {
-                    // this one went away (pulled from its bay, or replaced): drop it and carry on with the rest
+                    // this one went away, was replaced, or Windows re-issued its tag (it does that in normal use, when the
+                    // firmware revises the capacity): drop it, carry on with the rest, and look afresh on the next read
+                    // so a two-battery laptop never shows half its battery for long
                     CloseHandle(handle);
                     _batteries.RemoveAt(i);
+                    _opened = DateTime.MinValue;
                     continue;
                 }
                 var ask = new BATTERY_WAIT_STATUS { BatteryTag = tag };
@@ -64,11 +69,11 @@ public static unsafe partial class BatteryDriver
 
                 powerState |= status.PowerState;
                 capabilities |= info.Capabilities;
-                if (status.Capacity != UnknownCapacity) { capacity += status.Capacity; anyCapacity = true; }
+                if (status.Capacity != UnknownCapacity) { capacity += status.Capacity; anyCapacity = true; } else someCapacityUnknown = true;
                 if (status.Rate != UnknownRate) { rate += status.Rate; anyRate = true; }
                 if (voltage == UnknownVoltage) voltage = status.Voltage;
-                if (info.DesignMwh != UnknownCapacity) { design += info.DesignMwh; anyDesign = true; }
-                if (info.FullMwh != UnknownCapacity) { full += info.FullMwh; anyFull = true; }
+                if (info.DesignMwh != UnknownCapacity) { design += info.DesignMwh; anyDesign = true; } else someDesignUnknown = true;
+                if (info.FullMwh != UnknownCapacity) { full += info.FullMwh; anyFull = true; } else someFullUnknown = true;
                 cycles = Math.Max(cycles, info.Cycles);
             }
             if (_batteries.Count == 0)
@@ -77,6 +82,10 @@ public static unsafe partial class BatteryDriver
             // "Discharging" from an idle second battery must not override "charging" from the one doing the work
             if ((powerState & Charging) != 0 && rate > 0) powerState &= ~Discharging;
             if ((powerState & Discharging) != 0 && rate < 0) powerState &= ~Charging;
+            // a total with one battery missing from it is not the total: unknown beats half
+            if (someCapacityUnknown) anyCapacity = false;
+            if (someDesignUnknown) anyDesign = false;
+            if (someFullUnknown) anyFull = false;
 
             return (new Status(powerState, anyCapacity ? (uint)Math.Min(capacity, uint.MaxValue - 1) : UnknownCapacity, voltage, anyRate ? (int)Math.Clamp(rate, int.MinValue + 1, int.MaxValue) : UnknownRate),
                     new Info(capabilities, anyDesign ? (uint)Math.Min(design, uint.MaxValue - 1) : UnknownCapacity, anyFull ? (uint)Math.Min(full, uint.MaxValue - 1) : UnknownCapacity, cycles));
@@ -123,7 +132,7 @@ public static unsafe partial class BatteryDriver
                 var query = new BATTERY_QUERY_INFORMATION { BatteryTag = tag, InformationLevel = 0 };
                 BATTERY_INFORMATION info;
                 if (DeviceIoControl(handle, IOCTL_BATTERY_QUERY_INFORMATION, &query, (uint)sizeof(BATTERY_QUERY_INFORMATION), &info, (uint)sizeof(BATTERY_INFORMATION), out _, 0)
-                    && (info.Capabilities & SystemBattery) != 0)
+                    && (info.Capabilities & SystemBattery) != 0 && (info.Capabilities & ShortTerm) == 0)
                 {
                     _batteries.Add((handle, tag, new Info(info.Capabilities, info.DesignedCapacity, info.FullChargedCapacity, info.CycleCount)));
                     continue;
@@ -157,10 +166,13 @@ public static unsafe partial class BatteryDriver
                 SetupDiGetDeviceInterfaceDetailW(devs, ref data, null, 0, out uint needed, 0);
                 if (needed == 0)
                     continue;
-                byte* buffer = stackalloc byte[(int)needed];
-                *(uint*)buffer = (uint)(sizeof(nint) == 8 ? 8 : 6); // cbSize of the fixed part
-                if (SetupDiGetDeviceInterfaceDetailW(devs, ref data, buffer, needed, out _, 0))
-                    paths.Add(new string((char*)(buffer + 4)));
+                var bytes = new byte[needed + 2];   // + a terminator's worth, in case the driver's count leaves it off
+                fixed (byte* buffer = bytes)
+                {
+                    *(uint*)buffer = (uint)(sizeof(nint) == 8 ? 8 : 6); // cbSize of the fixed part
+                    if (SetupDiGetDeviceInterfaceDetailW(devs, ref data, buffer, needed, out _, 0))
+                        paths.Add(new string((char*)(buffer + 4)));
+                }
             }
         }
         finally

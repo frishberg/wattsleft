@@ -3,7 +3,7 @@
 ;        then `ISCC.exe Store\WattsLeft.iss`  -> Store\WattsLeft-Setup.exe
 
 #define AppName "Watt's Left"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.0"
 #define Publisher "Aron Frishberg"
 #define Url "https://wattsleft.app"
 #define Src "..\bin\unpackaged\win-x64"
@@ -30,9 +30,8 @@ UninstallDisplayName={#AppName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-WizardImageFile=wizard-large.png
-WizardSmallImageFile=wizard-small.png
-WizardImageStretch=yes
+WizardImageFile=wizard-large-100.png,wizard-large-125.png,wizard-large-150.png,wizard-large-175.png,wizard-large-200.png,wizard-large-250.png
+WizardSmallImageFile=wizard-small-100.png,wizard-small-125.png,wizard-small-150.png,wizard-small-175.png,wizard-small-200.png,wizard-small-250.png
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
@@ -79,6 +78,15 @@ begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/im WattsLeft.exe /f /t', '',
     SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(700);
+end;
+
+{ Inno's check lists reserve room for the check box at its 100% size (13 px)
+  but draw it at the real size, so at 200% scaling the box is pushed half off
+  the left edge. A wider offset gives it the room back. }
+procedure InitializeWizard;
+begin
+  WizardForm.TasksList.Offset := ScaleX(8);
+  WizardForm.RunList.Offset := ScaleX(8);
 end;
 
 function InitializeSetup(): Boolean;

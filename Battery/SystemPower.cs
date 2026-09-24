@@ -21,6 +21,9 @@ public static unsafe class SystemPower
     /// <summary>What the counters were found to contain, for diagnostics.</summary>
     public static string Description { get; private set; } = "not read yet";
 
+    /// <summary>True when the reading is Intel's whole-platform meter (Psys) rather than just the processor package.</summary>
+    public static bool WholePlatform { get; private set; }
+
     /// <summary>True once the counter set has been found on this machine.</summary>
     public static bool Available => _available;
 
@@ -72,7 +75,8 @@ public static unsafe class SystemPower
                     string n = name.ToLowerInvariant();
                     names.Add($"{name}={value:0}");
                     if (n == "_total") continue;
-                    if (n.Contains("psys") || n.Contains("platform")) { psys += value; anyPsys = true; }
+                    // Psys reads 0 on laptops whose firmware doesn't signal it; then it isn't a meter, and the package is
+                    if (n.Contains("psys") || n.Contains("platform")) { if (value > 500) { psys += value; anyPsys = true; } }
                     else if (n.EndsWith("_pkg") || n.Contains("package") && !(n.Contains("pp0") || n.Contains("pp1") || n.Contains("dram") || n.Contains("core") || n.Contains("gpu") || n.Contains("uncore"))) { pkg += value; anyPkg = true; }
                     else if (n.Contains("dram")) { dram += value; }
                     else if (!(n.Contains("pp0") || n.Contains("pp1") || n.Contains("core") || n.Contains("gpu") || n.Contains("uncore"))) { other += value; anyOther = true; }
@@ -84,6 +88,7 @@ public static unsafe class SystemPower
             Description = $"{count} instances [{string.Join(", ", names)}] → {(anyPsys ? "platform" : anyPkg ? "package+dram" : anyOther ? "sum" : "none")}";
             if (milliwatts < 0)
                 return null;
+            WholePlatform = anyPsys;
             double watts = milliwatts / 1000.0;
             return watts is > 0.05 and < 400 ? watts : null;   // outside that it isn't a laptop processor reading, whatever the units were
         }

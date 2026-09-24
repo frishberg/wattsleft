@@ -11,7 +11,7 @@
   <Identity
     Name="AronFrishberg.WattsLeft"
     Publisher="CN=E021B26C-F581-4C65-BDF8-02510788F0A0"
-    Version="1.1.0.0" />
+    Version="1.2.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="FFF39CFE-FAF5-4C70-A41B-03B74536A9B6" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

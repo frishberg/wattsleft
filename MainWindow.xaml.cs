@@ -43,8 +43,9 @@ public sealed partial class MainWindow : Window
 
     private bool? _wasCharging;
     private string _lastHoursText = "";
-    private DateTime _lastChargingAt = DateTime.MinValue;
     private DateTime _topShownAt;
+    private string? _shownState;   // the state line as last drawn; null forces a redraw
+    private readonly FontFamily BoltFont = new("Segoe Fluent Icons,Segoe MDL2 Assets");
     private bool? _topOnAc;
 
     public MainWindow()
@@ -692,7 +693,8 @@ public sealed partial class MainWindow : Window
     private DateTime _movingUntil;
 
     private bool _readInFlight;
-    private DateTime _diagnosticsAt = DateTime.MinValue;   // the same text as Copy diagnostics, kept fresh in the data folder for support
+    private DateTime _diagnosticsAt = DateTime.MinValue;
+    private DateTime _collectedAt = DateTime.UtcNow;   // the same text as Copy diagnostics, kept fresh in the data folder for support
 
     /// <summary>
     /// The read happens off the UI thread. Asking the battery driver is normally instant, but around a plug or
@@ -712,12 +714,22 @@ public sealed partial class MainWindow : Window
         {
             _readInFlight = false;
             StateText.Text = "error: " + e.Message;
+            _shownState = null;
             return;
         }
         _readInFlight = false;
         if (DateTime.UtcNow < _movingUntil || _held) return;
         try { Show(r); }
-        catch (Exception e) { StateText.Text = "error: " + e.Message; }
+        catch (Exception e) { StateText.Text = "error: " + e.Message; _shownState = null; }
+        // WinUI text runs, animations and brushes live in native memory that is only released when .NET collects the
+        // small managed wrappers around them. This app allocates so little managed memory that a collection could take
+        // hours to happen on its own, so the native side would creep up all day in the tray. A collection of a heap this
+        // size takes well under a millisecond.
+        if ((DateTime.UtcNow - _collectedAt).TotalMinutes >= 2)
+        {
+            _collectedAt = DateTime.UtcNow;
+            GC.Collect();
+        }
         if ((DateTime.UtcNow - _diagnosticsAt).TotalSeconds >= 60)
         {
             _diagnosticsAt = DateTime.UtcNow;
@@ -728,17 +740,21 @@ public sealed partial class MainWindow : Window
     private void Show(Reading? r)
     {
         _reading = r;
-        if (r is not null)
+        // Just after a plug change the battery can still report the old direction; those readings stay out of the
+        // averages the cards quote, the time estimate and the graphs.
+        bool stale = r is { Settling: true };
+        if (r is not null && !stale)
         {
             var t = DateTime.UtcNow;
             _drawSamples.Enqueue((t, r.LaptopWatts, r.OnAc ? r.ChargerWatts : 0));
             while (_drawSamples.Count > 0 && (t - _drawSamples.Peek().At).TotalSeconds > AverageSeconds) _drawSamples.Dequeue();
         }
-        RecordHistory(r);
+        if (!stale) RecordHistory(r);
         if (r is null)
         {
             PercentText.Text = "—";
             StateText.Text = "No battery found";
+            _shownState = null;
             InText.Text = OutText.Text = NetText.Text = StoredText.Text = HealthText.Text = VoltageText.Text = "—";
             _samples.Clear();
             _tray.Set("—", "No battery found");
@@ -746,7 +762,7 @@ public sealed partial class MainWindow : Window
         }
 
         var now = DateTime.UtcNow;
-        if (r.Watts is double w)
+        if (r.Watts is double w && !stale)
         {
             _samples.Enqueue((now, w));
             while (_samples.Count > 0 && (now - _samples.Peek().At).TotalSeconds > EstimateSeconds)
@@ -783,63 +799,49 @@ public sealed partial class MainWindow : Window
         if (_lastHoursText == "—" && hoursText != "—")
             SettleIn(StateText);
         _lastHoursText = hoursText;
-        // A single zero-rate read mid-charge must not flick the line to "holding" and back: charging sticks for a few seconds
-        if (r.Charging) _lastChargingAt = now;
-        bool charging = r.Charging || (r.OnAc && r.Percent < 100 && (now - _lastChargingAt).TotalSeconds < 4);
-        string state = charging ? $"Charging · full in {Hours(est)}"
-                     : r.Draining ? $"Plugged in · draining · {Hours(est)} left"
-                     : r.OnAc ? (r.Percent >= 99 ? "Plugged in · full" : r.ChargerTooWeak ? "Plugged in · weak charger" : "Plugged in · holding")
-                     : $"On battery · {Hours(est)} left";
-        // "Charging", then the bolt as part of the same line of text, then the rest
-        int dot = state.IndexOf(" · ");
-        StateText.Inlines.Clear();
-        StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = dot < 0 ? state : state[..dot] });
-        if (charging)
-            StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " ", FontFamily = new FontFamily("Segoe Fluent Icons,Segoe MDL2 Assets"), FontSize = 9.5 });
-        if (dot >= 0)
-            StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " " + state[(dot + 1)..] });
+        // The reading already holds charging through a lone zero and waits a few seconds before calling a drain.
+        bool charging = r.Charging;
+        string state = Display.StateLine(r, Hours(est));
+        // "Charging", then the bolt as part of the same line of text, then the rest. Rebuilt only when the words
+        // change: new text runs four times a second are native objects the garbage collector frees only lazily.
+        if (state != _shownState)
+        {
+            _shownState = state;
+            int dot = state.IndexOf(" · ");
+            StateText.Inlines.Clear();
+            StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = dot < 0 ? state : state[..dot] });
+            if (charging)
+                StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " ", FontFamily = BoltFont, FontSize = 9.5 });
+            if (dot >= 0)
+                StateText.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = " " + state[(dot + 1)..] });
+        }
 
         var lit = Brush("Ink");
         var faint = Brush("InkFaint");
-        // A battery that reports no rate shows a dash, never a made-up zero, and the caption says why.
-        // IN is what the charger puts out, OUT is what the laptop uses, NET beneath them is what the battery
-        // sees: IN minus OUT, positive filling, negative emptying. NET is the one number the battery reports
-        // directly; on the charger OUT is the processor meter plus the learned overhead, and IN is OUT plus NET.
-        // The row refreshes once a second so it reads like a gauge, not a ticker; a plug change refreshes it at once.
+        // The words and numbers come from Display.TopRow. The row refreshes once a second so it reads like a gauge,
+        // not a ticker; a plug change refreshes it at once.
         bool plugChanged = _wasCharging is not null && _wasCharging != r.Charging || _topOnAc != r.OnAc;
         if (plugChanged || (now - _topShownAt).TotalMilliseconds >= 1000)
         {
             _topShownAt = now;
             _topOnAc = r.OnAc;
-            string? noRate = r.Watts is not null ? null : r.Source == WattsSource.Measuring ? "measuring…" : "not reported";
-            double? laptop = r.LaptopWatts;
-            double? charger = !r.OnAc ? 0 : r.ChargerWatts;
-            string? noEstimate = !r.OnAc || laptop is not null ? null : r.Draw == DrawState.Calibrating ? "estimating…" : "not available";
-            string estTag = r.Source == WattsSource.Estimated ? "est. " : "";
-
-            InText.Text = charger is { } cw ? $"{cw:0.0} W" : "—";
-            InText.Foreground = charger > 0 ? lit : faint;
-            InSub.Text = !r.OnAc ? "unplugged" : noEstimate ?? "charger";
-
-            OutText.Text = laptop is { } lw ? $"{lw:0.0} W" : "—";
-            OutText.Foreground = laptop > 0 ? lit : faint;
-            OutSub.Text = !r.OnAc ? (noRate ?? $"{estTag}laptop") : noEstimate ?? "est. laptop";
-
-            NetText.Text = r.Watts is { } nw ? $"{nw:0.0;-0.0;0.0} W" : "—";
-            NetText.Foreground = r.Watts is not (null or 0) ? lit : faint;
-            NetSub.Text = noRate ?? (estTag.Length > 0 ? "est." : "");   // the sign says which way; the state line says the rest
+            var top = Display.TopRow(r);
+            InText.Text = top.In;
+            InText.Foreground = top.InLit ? lit : faint;
+            InSub.Text = top.InSub;
+            OutText.Text = top.Out;
+            OutText.Foreground = top.OutLit ? lit : faint;
+            OutSub.Text = top.OutSub;
+            NetText.Text = top.Net;
+            NetText.Foreground = top.NetLit ? lit : faint;
+            NetSub.Text = top.NetSub;
         }
-        double? tipLaptop = r.LaptopWatts, tipCharger = !r.OnAc ? 0 : r.ChargerWatts;
 
         StoredText.Text = $"{Wh(r.RemainingMwh)} / {Wh(r.FullMwh)}";
         VoltageText.Text = r.Volts is { } v ? $"{v:0.00} V" : "—";
         HealthText.Text = (r.Health is { } health ? $"{health * 100:0}%" : "—") + (r.Cycles is { } c ? $" · {c} cycles" : "");
 
-        string tip = $"{r.Percent:0}% · {state.ToLowerInvariant()}";
-        if (tipCharger > 0) tip += $" · in {tipCharger:0.0} W";
-        if (tipLaptop > 0) tip += $" · out {tipLaptop:0.0} W";
-        if (r.Watts is { } tn && tn != 0) tip += $" · net {tn:0.0;-0.0} W";
-        _tray.Set($"{r.Percent:0}", tip);
+        _tray.Set($"{r.Percent:0}", Display.Tip(r, state));
         TaskbarProgress.Show(Hwnd, (int)Math.Round(r.Percent));
         KeepOnChargedBar();
     }
@@ -904,7 +906,9 @@ public sealed partial class MainWindow : Window
         if (_reading is not { } r) return new("Charge", "—", ["How full the battery is."]);
         string now = r.Charging ? "It's filling up right now."
                    : r.Draining ? "It's going down even with the charger in."
-                   : r.OnAc ? "It's full, and the laptop is running off the charger."
+                   : r.JustPlugged ? "The charger just went in; give it a second."
+                   : r.OnAc && r.Percent >= 99 ? "It's full, and the laptop is running off the charger."
+                   : r.OnAc ? "It's holding here, and the laptop is running off the charger."
                    : r.Percent <= 15 ? "Getting low. Plug in soon."
                    : "The laptop is running on it.";
         return new("Charge", $"{r.Percent:0}%", [$"How full the battery is. {now}"]);
@@ -919,8 +923,13 @@ public sealed partial class MainWindow : Window
     };
 
     private static string Learning(Reading r) => r.Draw == DrawState.Calibrating
-        ? "Not yet: it needs a few minutes on battery first to learn this laptop. Unplug once and it'll know from then on."
+        ? "Reading the processor's meter. It'll show in a moment."
         : "This laptop can't report it. NET still shows whether the charger is keeping up.";
+
+    /// <summary>Until the laptop has run on battery for a couple of minutes, the plugged-in figures start from a typical guess.</summary>
+    private static string Rough(Reading r) => r.Draw == DrawState.Calibrating
+        ? " For now it's a rough guess; a couple of minutes on battery and it learns this laptop."
+        : "";
 
     private HoverCards.Card CardIn()
     {
@@ -933,7 +942,7 @@ public sealed partial class MainWindow : Window
             string split = net > 0.5 ? $"{About(laptop)} runs the laptop and {About(net)} fills the battery."
                          : net < -0.5 ? $"not enough, so the battery is chipping in {About(net)}."
                          : "all of it runs the laptop, since the battery is full.";
-            return new("In", About(charger), [what + $"Lately {About(charger)}: {split}"]);
+            return new("In", About(charger), [what + $"Lately {About(charger)}: {split}" + Rough(r)]);
         }
         return new("In", "—", [what + Learning(r)]);
     }
@@ -947,7 +956,7 @@ public sealed partial class MainWindow : Window
         if (!r.OnAc)
             return new("Out", About(AverageLaptop()), [what + $"Lately {About(AverageLaptop())}, all of it from the battery. A bright screen and heavy work push it up." + SourceNote(r)]);
         if (AverageLaptop() is { } laptop)
-            return new("Out", About(laptop), [what + $"Lately {About(laptop)}, estimated while plugged in. A bright screen and heavy work push it up."]);
+            return new("Out", About(laptop), [what + $"Lately {About(laptop)}, estimated while plugged in. A bright screen and heavy work push it up." + Rough(r)]);
         return new("Out", "—", [what + Learning(r)]);
     }
 

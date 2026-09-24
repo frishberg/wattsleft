@@ -1036,11 +1036,13 @@ public sealed partial class MainWindow
 
     // ------------------------------------------------------------ body (compositor animations)
 
-    private CompositionEasingFunction Enter => Compositor.CreateCubicBezierEasingFunction(new Vector2(0, 0), new Vector2(0, 1));
-    private CompositionEasingFunction Exit => Compositor.CreateCubicBezierEasingFunction(new Vector2(1, 0), new Vector2(1, 1));
-    private CompositionEasingFunction Accelerate => Compositor.CreateCubicBezierEasingFunction(new Vector2(0.5f, 0), new Vector2(1, 1));
-    private CompositionEasingFunction Smooth => Compositor.CreateCubicBezierEasingFunction(new Vector2(0.4f, 0), new Vector2(0.4f, 1));
-    private CompositionEasingFunction Linear => Compositor.CreateLinearEasingFunction();
+    // Made once and reused: every dance beat asks for them, and each new one is a native object freed only lazily.
+    private CompositionEasingFunction? _enter, _exit, _accelerate, _smooth, _linear;
+    private CompositionEasingFunction Enter => _enter ??= Compositor.CreateCubicBezierEasingFunction(new Vector2(0, 0), new Vector2(0, 1));
+    private CompositionEasingFunction Exit => _exit ??= Compositor.CreateCubicBezierEasingFunction(new Vector2(1, 0), new Vector2(1, 1));
+    private CompositionEasingFunction Accelerate => _accelerate ??= Compositor.CreateCubicBezierEasingFunction(new Vector2(0.5f, 0), new Vector2(1, 1));
+    private CompositionEasingFunction Smooth => _smooth ??= Compositor.CreateCubicBezierEasingFunction(new Vector2(0.4f, 0), new Vector2(0.4f, 1));
+    private CompositionEasingFunction Linear => _linear ??= Compositor.CreateLinearEasingFunction();
 
     private ScalarKeyFrameAnimation Scalar(CompositionEasingFunction ease, params (float At, float Value)[] frames)
     {
